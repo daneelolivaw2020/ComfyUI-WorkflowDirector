@@ -22,5 +22,8 @@ jobs:
       - name: Compile all Python sources
         run: python -m compileall -q .
 
+      - name: Check frontend JavaScript syntax
+        run: node --check web/workflow_director_lab.js
+
       - name: Run backend-agnostic core tests
         run: python -m unittest discover -s tests -v
