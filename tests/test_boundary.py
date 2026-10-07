@@ -52,6 +52,23 @@ class SnapshotRunObserverTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observations[0].label, "BASELINE")
         self.assertEqual(observations[0].snapshot["count"], 2)
 
+    async def test_baseline_interference_is_rejected(self):
+        calls = 0
+
+        async def active_jobs():
+            nonlocal calls
+            calls += 1
+            return set() if calls < 3 else {"foreign-job"}
+
+        observer = SnapshotRunObserver(
+            snapshot=lambda: {"ok": True},
+            warm_up=True,
+            active_jobs=active_jobs,
+        )
+
+        with self.assertRaises(BoundaryInterferenceError):
+            await observer.before_run(plan=make_plan())
+
     async def test_warmup_can_be_disabled(self):
         count = 0
 
