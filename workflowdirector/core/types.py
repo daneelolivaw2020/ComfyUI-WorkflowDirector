@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Mapping
+import copy
 import json
 import time
 import uuid
@@ -94,7 +95,6 @@ class RunPlan:
 
     run_id: str
     steps: tuple[PreparedStep, ...]
-    client_id: str | None = None
 
     def __post_init__(self) -> None:
         uuid.UUID(self.run_id)
@@ -130,7 +130,7 @@ class MemoryObservation:
 
     @classmethod
     def capture(cls, label: str, snapshot: Mapping[str, Any]) -> "MemoryObservation":
-        return cls(label=label, captured_at=time.time(), snapshot=dict(snapshot))
+        return cls(label=label, captured_at=time.time(), snapshot=copy.deepcopy(snapshot))
 
 
 @dataclass
