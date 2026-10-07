@@ -174,7 +174,7 @@ class ComfyHttpAdapter:
     async def get_active_job_ids(self) -> set[str]:
         try:
             async with self._session.get(
-                f"{self._base_url}/api/jobs?status=pending,in_progress&limit=100",
+                f"{self._base_url}/api/jobs?status=pending,in_progress",
                 timeout=self._timeout,
             ) as response:
                 payload = await self._read_json(response)
