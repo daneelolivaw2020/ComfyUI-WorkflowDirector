@@ -1,5 +1,19 @@
 # Validation Plan
 
+## Non-negotiable acceptance environment
+
+Every phase that touches execution or memory must ultimately pass on:
+
+    Google Colab Free Tier
+    NVIDIA T4
+    standard-memory runtime
+
+Larger GPUs may be useful for diagnosis, but they cannot be used to declare a
+phase successful. Do not compensate for a memory failure by moving the target to
+A100/L4/High-RAM.
+
+The lab must also assume /content is ephemeral and that runtime loss is possible.
+
 The implementation is validated in increasing levels of complexity.
 
 ## Release policy for every test
@@ -93,10 +107,11 @@ Test conceptually:
 
 Do not assume the failure mechanism is identical to the older environment where the problem was first observed.
 
-Target:
+Target on the mandatory Colab Free T4 environment:
 
 - at least three consecutive W1 -> boundary -> W2 cycles;
 - no whole notebook/kernel restart;
+- no paid/High-RAM runtime requirement;
 - memory measurements recorded at every boundary.
 
 ## Phase 4 — Minimal Context
