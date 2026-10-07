@@ -2,21 +2,19 @@
 
 ## Design goal
 
-WorkflowDirector should feel like a native visual layer on top of ComfyUI rather than a separate script-driven system.
+WorkflowDirector should feel like a native visual layer on top of ComfyUI rather
+than a separate script-driven system.
 
 The intended user experience is eventually:
 
     [ MASTER ] [ Workflow 1 ] [ Workflow 2 ] [ Workflow 3 ]
 
-Each individual Workflow remains a normal ComfyUI document. The Master coordinates them at a higher level.
+Each individual Workflow remains a normal ComfyUI document. The Master
+coordinates them at a higher level.
 
-## Responsibilities
-
-### Master
+## Master
 
 The Master defines high-level execution order.
-
-Initial version:
 
     START
       |
@@ -30,9 +28,10 @@ Initial version:
       |
     END
 
-Master connections primarily represent execution dependency, not every piece of data passed between workflows.
+Master connections primarily represent execution dependency, not every piece of
+data passed between workflows.
 
-### Workflow
+## Workflow
 
 A Workflow:
 
@@ -40,19 +39,18 @@ A Workflow:
 - can be opened and tested independently;
 - can read selected values from Context;
 - can publish new or replacement values to Context;
-- must finish as its own top-level ComfyUI execution.
+- runs as its own top-level ComfyUI job.
 
-### Context
+## Context
 
 Context is deliberately schema-light.
 
-Conceptually:
-
     KEY -> TYPE -> VALUE
 
-Key names are arbitrary. The system must not hard-code concepts such as current_image, current_prompt, or current_latent.
+Key names are arbitrary. WorkflowDirector must not hard-code names such as
+current_image, current_prompt or current_latent.
 
-Initial cross-workflow data types will likely be:
+Initial cross-workflow data types:
 
 - STRING
 - IMAGE
@@ -60,51 +58,50 @@ Initial cross-workflow data types will likely be:
 
 Other types can be added later without changing the core model.
 
-### Checkpoint
+## Checkpoint
 
 A Checkpoint is an explicit saved snapshot of Context.
 
-Checkpointing is intentionally simpler than full history/versioning. History, provenance, branching and undo are outside the initial scope.
+Checkpointing is intentionally simpler than full history/versioning. History,
+provenance, branching and undo are outside the initial scope.
 
-### Memory Barrier
+## Execution state
 
-The Memory Barrier is the architectural reason for separate Workflow executions.
+Use two different channels for two different purposes:
 
-It occurs only after the previous prompt has fully left its execution lifecycle.
+- **WebSocket execution events** provide live UI feedback: active node,
+  progress, previews, errors and execution messages.
+- **Native Jobs API** provides the authoritative job state used by the Master to
+  decide whether it may commit Context or continue to the next Workflow.
 
-Important ComfyUI 0.37 detail: execution_success is emitted before the
-PromptExecutor.execute_async() finalizer runs. The finalizer then calls
-prompt_model_tracker.end(), which marks prompt-tracked dynamic models as no
-longer in use. Therefore execution_success alone is not a sufficient
-memory-barrier signal.
+A successful workflow boundary is reached only when the submitted job reports
+the terminal state `completed`.
 
-The minimum safe boundary is conceptually:
+`execution_success` alone is not the boundary. In the currently audited
+ComfyUI v0.39.0 source it is emitted before the PromptExecutor finalizer runs.
 
-    Workflow N
+## Memory Barrier
+
+The Memory Barrier exists between two top-level ComfyUI jobs.
+
+    Workflow N job
        |
-    execution_success may be emitted
+    live WebSocket events
        |
-    PromptExecutor finalizer
+    native job status = completed
        |
-    prompt_model_tracker.end()
+    measure RAM / VRAM
        |
-    PromptExecutor.execute() returns
-       |
-    prompt is removed from the running queue / history is committed
-       |
-    MEMORY BARRIER MAY BEGIN
-       |
-    measure RAM/VRAM
-       |
-    attempt safe post-prompt release
+    optional post-job cleanup only if required
        |
     measure again
        |
-    Workflow N+1
+    submit Workflow N+1
 
-WorkflowDirector must verify that the target prompt is no longer running before
-performing any memory-release experiment. It must not depend on an unload node
-running inside the prompt.
+The Master submits one Workflow at a time. The successor should not already be
+queued while the barrier is being evaluated.
+
+No unload node inside Workflow N is considered a valid memory boundary.
 
 ## Observability
 
@@ -124,8 +121,8 @@ The orchestration layer must not become a black box.
 
 The intended storage split is:
 
-- **GitHub** — source code, documentation, releases.
-- **Google Drive** — persistent project/run data, Context assets and Checkpoints.
+- **GitHub** — source code, documentation and releases;
+- **Google Drive** — persistent project/run data, Context assets and Checkpoints;
 - **Colab /content** — fast temporary scratch space.
 
 Persistence is not required for the first memory-boundary proof of concept.
