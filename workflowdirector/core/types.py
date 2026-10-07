@@ -44,6 +44,7 @@ class PreparedStep:
     workflow_id: str
     name: str
     _prompt_json: str = field(repr=False)
+    _workflow_json: str = field(repr=False)
 
     def __init__(
         self,
@@ -51,6 +52,7 @@ class PreparedStep:
         workflow_id: str,
         name: str,
         prompt: Mapping[str, Any],
+        workflow: Mapping[str, Any] | None = None,
     ) -> None:
         if not step_id:
             raise ValueError("step_id cannot be empty")
@@ -64,14 +66,26 @@ class PreparedStep:
             ensure_ascii=False,
             allow_nan=False,
         )
+        workflow_encoded = json.dumps(
+            workflow or {},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
         object.__setattr__(self, "step_id", step_id)
         object.__setattr__(self, "workflow_id", workflow_id)
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "_prompt_json", encoded)
+        object.__setattr__(self, "_workflow_json", workflow_encoded)
 
     @property
     def prompt(self) -> Mapping[str, Any]:
         return json.loads(self._prompt_json)
+
+    @property
+    def workflow(self) -> Mapping[str, Any]:
+        return json.loads(self._workflow_json)
 
 
 @dataclass(frozen=True)
@@ -80,6 +94,7 @@ class RunPlan:
 
     run_id: str
     steps: tuple[PreparedStep, ...]
+    client_id: str | None = None
 
     def __post_init__(self) -> None:
         uuid.UUID(self.run_id)
