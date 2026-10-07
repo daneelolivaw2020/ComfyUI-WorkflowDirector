@@ -1,6 +1,7 @@
 """Backend-agnostic WorkflowDirector core."""
 
 from .adapters import (
+    AdapterTransportError,
     BoundaryObserver,
     ComfyAdapter,
     NoopBoundaryObserver,
@@ -19,6 +20,7 @@ from .types import (
 )
 
 __all__ = [
+    "AdapterTransportError",
     "BoundaryObserver",
     "ComfyAdapter",
     "DirectorEngine",
