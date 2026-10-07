@@ -5,6 +5,8 @@ from .adapters import (
     BoundaryObserver,
     ComfyAdapter,
     NoopBoundaryObserver,
+    NoopRunObserver,
+    RunObserver,
     SubmissionTransportError,
 )
 from .director import DirectorEngine
@@ -37,8 +39,10 @@ __all__ = [
     "JobState",
     "MemoryObservation",
     "NoopBoundaryObserver",
+    "NoopRunObserver",
     "PreparedStep",
     "RunNotFoundError",
+    "RunObserver",
     "RunPhase",
     "RunPlan",
     "RunRecord",
