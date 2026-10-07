@@ -38,6 +38,7 @@ class FakeAdapter:
         lose_ack_for=None,
         mismatch_for=None,
         transient_status_errors=None,
+        active_job_sequences=None,
     ):
         self.scripted_states = {
             job_id: list(states) for job_id, states in scripted_states.items()
@@ -48,6 +49,9 @@ class FakeAdapter:
         self.submitted_clients = []
         self.last_state = {}
         self.transient_status_errors = dict(transient_status_errors or {})
+        self.active_job_sequences = [
+            set(items) for items in (active_job_sequences or [])
+        ]
 
     async def submit_prompt(self, *, prompt, workflow, prompt_id, client_id):
         self.submissions.append(prompt_id)
@@ -57,6 +61,11 @@ class FakeAdapter:
         if prompt_id in self.mismatch_for:
             return str(uuid.uuid4())
         return prompt_id
+
+    async def get_active_job_ids(self):
+        if self.active_job_sequences:
+            return self.active_job_sequences.pop(0)
+        return set()
 
     async def get_job_state(self, prompt_id):
         remaining_errors = self.transient_status_errors.get(prompt_id, 0)
@@ -254,6 +263,34 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any(e.kind == "job_status_transport_error" for e in record.events)
         )
+
+    async def test_foreign_active_job_blocks_first_submission(self):
+        plan = make_plan()
+        adapter = FakeAdapter(
+            {},
+            active_job_sequences=[{"foreign-job"}],
+        )
+
+        record = await make_engine(adapter).run(plan)
+
+        self.assertEqual(record.phase, RunPhase.FAILED)
+        self.assertEqual(record.failure_code, "QUEUE_NOT_EXCLUSIVE")
+        self.assertEqual(adapter.submissions, [])
+
+    async def test_foreign_job_between_steps_blocks_second_submission(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        adapter = FakeAdapter(
+            {a: [JobState.COMPLETED]},
+            active_job_sequences=[set(), {"foreign-job"}],
+        )
+        boundary = FakeBoundary()
+
+        record = await make_engine(adapter, boundary=boundary).run(plan)
+
+        self.assertEqual(record.phase, RunPhase.FAILED)
+        self.assertEqual(record.failure_code, "QUEUE_NOT_EXCLUSIVE")
+        self.assertEqual(adapter.submissions, [a])
 
     async def test_boundary_failure_prevents_next_workflow(self):
         plan = make_plan()
