@@ -22,7 +22,9 @@ class ComfyAdapter(Protocol):
         self,
         *,
         prompt: Mapping[str, Any],
+        workflow: Mapping[str, Any],
         prompt_id: str,
+        client_id: str | None,
     ) -> str:
         """Submit a prepared prompt using the supplied client-generated UUID.
 
