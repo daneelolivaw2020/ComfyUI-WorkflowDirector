@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 import uuid
 
 from workflowdirector.core import (
+    AdapterTransportError,
     DirectorEngine,
     JobState,
     MemoryObservation,
@@ -22,7 +24,14 @@ async def no_sleep(_seconds):
 
 
 class FakeAdapter:
-    def __init__(self, scripted_states, *, lose_ack_for=None, mismatch_for=None):
+    def __init__(
+        self,
+        scripted_states,
+        *,
+        lose_ack_for=None,
+        mismatch_for=None,
+        transient_status_errors=None,
+    ):
         self.scripted_states = {
             job_id: list(states) for job_id, states in scripted_states.items()
         }
@@ -30,6 +39,7 @@ class FakeAdapter:
         self.mismatch_for = set(mismatch_for or [])
         self.submissions = []
         self.last_state = {}
+        self.transient_status_errors = dict(transient_status_errors or {})
 
     async def submit_prompt(self, *, prompt, prompt_id):
         self.submissions.append(prompt_id)
@@ -40,6 +50,11 @@ class FakeAdapter:
         return prompt_id
 
     async def get_job_state(self, prompt_id):
+        remaining_errors = self.transient_status_errors.get(prompt_id, 0)
+        if remaining_errors > 0:
+            self.transient_status_errors[prompt_id] = remaining_errors - 1
+            raise AdapterTransportError("simulated temporary disconnect")
+
         states = self.scripted_states.get(prompt_id)
         if states:
             state = states.pop(0)
@@ -195,6 +210,27 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.failure_code, "SUBMISSION_UNCERTAIN")
         self.assertEqual(adapter.submissions, [a])
 
+    async def test_temporary_status_disconnect_does_not_submit_duplicate(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        b = make_job_id(plan.run_id, "B", 1)
+        adapter = FakeAdapter(
+            {
+                a: [JobState.IN_PROGRESS, JobState.COMPLETED],
+                b: [JobState.COMPLETED],
+            },
+            transient_status_errors={a: 2},
+        )
+        engine = DirectorEngine(adapter, poll_interval_seconds=0, sleep=no_sleep)
+
+        record = await engine.run(plan)
+
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(adapter.submissions, [a, b])
+        self.assertTrue(
+            any(e.kind == "job_status_transport_error" for e in record.events)
+        )
+
     async def test_boundary_failure_prevents_next_workflow(self):
         plan = make_plan()
         a = make_job_id(plan.run_id, "A", 1)
@@ -222,6 +258,30 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         first_read["1"]["class_type"] = "Also Mutated"
 
         self.assertEqual(step.prompt["1"]["class_type"], "Original")
+
+    async def test_run_record_is_json_serializable(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        b = make_job_id(plan.run_id, "B", 1)
+        adapter = FakeAdapter(
+            {
+                a: [JobState.COMPLETED],
+                b: [JobState.COMPLETED],
+            }
+        )
+        boundary = FakeBoundary()
+        engine = DirectorEngine(
+            adapter,
+            boundary_observer=boundary,
+            poll_interval_seconds=0,
+            sleep=no_sleep,
+        )
+
+        record = await engine.run(plan)
+        encoded = json.dumps(record.to_dict())
+
+        self.assertIn(plan.run_id, encoded)
+        self.assertIn("completed", encoded)
 
     async def test_job_id_is_stable_for_same_run_step_attempt(self):
         run_id = str(uuid.uuid4())
