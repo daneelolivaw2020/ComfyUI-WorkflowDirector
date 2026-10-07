@@ -8,7 +8,7 @@ Install only what is required for the current test.
 
 Start with:
 
-- pinned ComfyUI version;
+- ComfyUI v0.37.0;
 - ComfyUI-WorkflowDirector.
 
 Add other custom nodes only when a test specifically requires them.
@@ -25,8 +25,13 @@ Success criteria:
 
 - Workflow 1 runs normally.
 - Workflow 1 reaches true completion.
-- Workflow 2 starts only after Workflow 1 has completed.
+- Workflow 1 is no longer present in ComfyUI's running queue.
+- Workflow 2 starts only after that condition is true.
 - execution events/errors remain observable.
+
+Do not use execution_success by itself as the definition of prompt completion:
+in ComfyUI 0.37 it is emitted before the PromptExecutor finalizer calls
+prompt_model_tracker.end().
 
 No heavy models are needed yet.
 
@@ -36,13 +41,16 @@ Goal: prove that memory can be recovered between independent top-level workflow 
 
 Measure at least:
 
-- baseline VRAM;
+- process RSS;
+- cgroup-aware system RAM available/total;
+- baseline PyTorch allocated/reserved VRAM;
+- device-global CUDA used/free VRAM;
 - peak VRAM during Workflow 1;
-- VRAM immediately after Workflow 1;
-- VRAM after Memory Barrier;
-- RAM before/after the barrier.
+- memory immediately after the prompt has left the running queue;
+- memory after the Memory Barrier.
 
-Success should be defined by memory returning close enough to baseline to safely load the next model, not merely by reserved CUDA memory decreasing.
+Success should be defined by enough real RAM/VRAM returning to safely load the
+next model, not merely by PyTorch reserved memory decreasing.
 
 The test must avoid ordinary in-workflow unload nodes.
 
@@ -52,15 +60,13 @@ Only after Phase 2 succeeds, add the minimum dependencies necessary for the real
 
 Test:
 
-```text
-Workflow 1
-  Klein Q6 + prompt/LoRA stack A
-       |
-Memory Barrier
-       |
-Workflow 2
-  Klein Q6 + prompt/LoRA stack B
-```
+    Workflow 1
+      Klein Q6 + prompt/LoRA stack A
+           |
+    Memory Barrier
+           |
+    Workflow 2
+      Klein Q6 + prompt/LoRA stack B
 
 The important criterion is repeatability. A single successful run is not enough.
 
