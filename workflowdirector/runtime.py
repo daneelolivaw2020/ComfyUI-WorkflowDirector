@@ -70,6 +70,7 @@ def get_director_service() -> DirectorRunService:
     run_observer = SnapshotRunObserver(
         snapshot=memory_snapshot,
         warm_up=True,
+        active_jobs=adapter.get_active_job_ids,
     )
     window_seconds = observation_window_seconds()
     boundary_observer = ObservationBoundary(
