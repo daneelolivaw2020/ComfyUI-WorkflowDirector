@@ -45,7 +45,8 @@ async def workflowdirector_status(_request):
         {
             "ok": True,
             "version": VERSION,
-            "idle": len(running_ids) == 0,
+            "worker_idle": len(running_ids) == 0,
+            "queue_empty": len(running_ids) == 0 and len(pending_ids) == 0,
             "running_prompt_ids": running_ids,
             "pending_prompt_ids": pending_ids,
             "memory": memory_snapshot(),
