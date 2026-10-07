@@ -30,8 +30,9 @@ After the native Jobs API reports the Workflow terminal:
 3. verify the queue again;
 4. observe an idle window;
 5. poll for foreign active jobs throughout that window;
-6. capture POST_WINDOW_END between queue checks;
-7. only then allow the next Workflow preflight.
+6. capture non-destructive intermediate memory samples while the window is open;
+7. capture POST_WINDOW_END between queue checks;
+8. only then allow the next Workflow preflight.
 
 The default observation window is 1.0 second and can be changed before ComfyUI
 starts with:
@@ -40,6 +41,14 @@ starts with:
 
 This window is diagnostic only. It is **not** a garbage-collection trigger and
 does not imply that memory is settled.
+
+Intermediate observations use labels such as:
+
+    POST_WINDOW_SAMPLE_001
+    POST_WINDOW_SAMPLE_002
+
+They allow the lab to distinguish a flat post-job state from natural drift
+without claiming that either state means "model unloaded".
 
 ## Measurements
 
@@ -87,7 +96,10 @@ initial safe path.
 The current build:
 
 - allows only one WorkflowDirector Master run at a time;
-- checks native pending/in-progress jobs before baseline and before each submit;
+- checks the complete native pending/in-progress job set before baseline and
+  before each submit;
+- while a Workflow is pending/in-progress, repeatedly verifies that any active
+  Comfy job is the expected WorkflowDirector job;
 - brackets baseline and boundary snapshots with queue checks;
 - polls for foreign jobs during the observation window.
 
@@ -108,3 +120,23 @@ Compare BASELINE, POST_IMMEDIATE and POST_WINDOW_END.
 
 Only after those measurements exist should WorkflowDirector decide whether a
 separate GC/allocator-only experiment is necessary.
+
+
+## Baseline-relative summary
+
+The run-status API now also exposes a memory_summary derived from the stored
+observations.
+
+Each post-job observation is compared to the same BASELINE across independent
+metrics:
+
+- process RSS;
+- system RAM available/unavailable;
+- PyTorch allocated VRAM;
+- PyTorch reserved VRAM;
+- device-global used/free VRAM;
+- diagnostic loaded-model registry count.
+
+The summary is descriptive only. It deliberately does not emit a boolean such
+as model_unloaded=true because no single one of those measurements proves object
+destruction or safe model release.
