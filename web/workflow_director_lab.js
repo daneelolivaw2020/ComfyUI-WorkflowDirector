@@ -7,6 +7,7 @@ const state = {
   lastRunId: null,
   lastRun: null,
   pollToken: 0,
+  isRunning: false,
 };
 
 function notify(severity, summary, detail = "") {
@@ -117,9 +118,15 @@ function makeObservationTable(memorySummary) {
 }
 
 async function startRun(steps) {
+  if (state.isRunning) {
+    throw new Error("A WorkflowDirector lab run is already active.");
+  }
   if (!steps.length || steps.some((step) => !step)) {
     throw new Error("Capture the required workflow slots first.");
   }
+
+  state.isRunning = true;
+  refreshAllPanels();
 
   const response = await api.fetchApi("/workflowdirector/runs", {
     method: "POST",
@@ -132,6 +139,8 @@ async function startRun(steps) {
 
   const body = await response.json();
   if (!response.ok) {
+    state.isRunning = false;
+    refreshAllPanels();
     throw new Error(body?.error ?? "HTTP " + response.status);
   }
 
@@ -160,6 +169,8 @@ async function startRun(steps) {
 
     const phase = statusBody?.record?.phase;
     if (["completed", "failed", "cancelled"].includes(phase)) {
+      state.isRunning = false;
+      refreshAllPanels();
       notify(
         phase === "completed" ? "success" : "error",
         "WorkflowDirector run " + phase,
@@ -201,7 +212,7 @@ function renderPanel(root) {
 
   const warning = document.createElement("div");
   warning.textContent =
-    "LAB ONLY — use fixed seeds. This capture path does not yet reproduce Comfy's beforeQueued widget callbacks.";
+    "LAB ONLY — captures live only in this browser tab. Use fixed seeds and avoid nodes that depend on beforeQueued callbacks.";
   warning.style.fontWeight = "600";
   warning.style.marginBottom = "8px";
   root.appendChild(warning);
@@ -211,16 +222,24 @@ function renderPanel(root) {
   captures.style.gap = "8px";
   captures.style.flexWrap = "wrap";
 
-  captures.appendChild(button("Capture current as A", () => capture("A")));
-  captures.appendChild(button("Capture current as B", () => capture("B")));
   captures.appendChild(
-    button("Run A only", () => startRun([state.A]), !state.A)
+    button("Capture current as A", () => capture("A"), state.isRunning)
+  );
+  captures.appendChild(
+    button("Capture current as B", () => capture("B"), state.isRunning)
+  );
+  captures.appendChild(
+    button(
+      "Run A only",
+      () => startRun([state.A]),
+      !state.A || state.isRunning
+    )
   );
   captures.appendChild(
     button(
       "Run A → B",
       () => startRun([state.A, state.B]),
-      !state.A || !state.B
+      !state.A || !state.B || state.isRunning
     )
   );
   root.appendChild(captures);
@@ -228,8 +247,10 @@ function renderPanel(root) {
   const slots = document.createElement("div");
   slots.style.margin = "8px 0";
   slots.textContent =
-    "A: " + (state.A ? state.A.workflow_id : "not captured") +
-    " | B: " + (state.B ? state.B.workflow_id : "not captured");
+    "Browser-memory captures — A: " +
+    (state.A ? state.A.workflow_id : "not captured") +
+    " | B: " +
+    (state.B ? state.B.workflow_id : "not captured");
   root.appendChild(slots);
 
   const run = state.lastRun;
