@@ -1,5 +1,25 @@
 # Compatibility Policy
 
+## Mandatory execution environment
+
+The primary acceptance environment is:
+
+    Google Colab Free Tier
+    NVIDIA T4 GPU
+    standard-memory runtime
+
+This requirement outranks convenience on larger hardware. WorkflowDirector must
+not require an A100, L4, paid Colab tier, High-RAM runtime, persistent local disk
+or a long-lived backend process.
+
+Colab Free does not guarantee that every session will be assigned a T4. The
+acceptance test is performed when a T4 is available; success on a larger GPU
+does not substitute for the T4 test.
+
+The architecture should treat /content as disposable scratch space and keep
+durable run state capable of surviving backend/runtime loss once persistence is
+implemented.
+
 ## Target
 
 WorkflowDirector targets the **latest stable ComfyUI release** during early
