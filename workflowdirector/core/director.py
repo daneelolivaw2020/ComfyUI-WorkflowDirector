@@ -11,6 +11,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from .adapters import (
+    AdapterTransportError,
     BoundaryObserver,
     ComfyAdapter,
     NoopBoundaryObserver,
@@ -117,14 +118,13 @@ class DirectorEngine:
                     step=step,
                     job_id=job_id,
                 )
+                attempt.observations.extend(observations)
             except Exception as exc:
                 record.fail(
                     "BOUNDARY_FAILED",
                     f"{type(exc).__name__}: {exc}",
                 )
                 return record
-
-            attempt.observations.extend(observations)
             record.event(
                 "boundary_completed",
                 step_id=step.step_id,
@@ -205,6 +205,15 @@ class DirectorEngine:
         for _ in range(self._submission_recovery_polls):
             try:
                 state = await self._adapter.get_job_state(job_id)
+            except AdapterTransportError as lookup_exc:
+                record.event(
+                    "submission_lookup_transport_error",
+                    step_id=step_id,
+                    job_id=job_id,
+                    detail=str(lookup_exc),
+                )
+                await self._sleep(self._poll_interval)
+                continue
             except Exception as lookup_exc:
                 record.fail(
                     "SUBMISSION_UNCERTAIN",
@@ -240,6 +249,15 @@ class DirectorEngine:
         for _ in range(self._max_polls):
             try:
                 state = await self._adapter.get_job_state(attempt.job_id)
+            except AdapterTransportError as exc:
+                record.event(
+                    "job_status_transport_error",
+                    step_id=attempt.step_id,
+                    job_id=attempt.job_id,
+                    detail=str(exc),
+                )
+                await self._sleep(self._poll_interval)
+                continue
             except Exception as exc:
                 record.fail(
                     "JOB_STATUS_FAILED",
