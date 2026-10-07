@@ -44,6 +44,11 @@ def memory_snapshot() -> dict[str, Any]:
         "comfy_device": str(comfy_device),
         "cuda_available": bool(torch.cuda.is_available()),
         "cuda": None,
+        "diagnostics": {
+            "comfy_loaded_model_entries": len(
+                comfy.model_management.current_loaded_models
+            ),
+        },
     }
 
     if not torch.cuda.is_available() or getattr(comfy_device, "type", None) != "cuda":
