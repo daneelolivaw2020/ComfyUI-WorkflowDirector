@@ -117,6 +117,30 @@ function makeObservationTable(memorySummary) {
   return table;
 }
 
+async function fetchRunStatus(runId) {
+  const statusResponse = await api.fetchApi(
+    "/workflowdirector/runs/" + encodeURIComponent(runId),
+    { cache: "no-store" }
+  );
+  const statusBody = await statusResponse.json();
+
+  if (!statusResponse.ok) {
+    throw new Error(statusBody?.error ?? "HTTP " + statusResponse.status);
+  }
+
+  state.lastRunId = runId;
+  state.lastRun = statusBody;
+  refreshAllPanels();
+  return statusBody;
+}
+
+async function refreshLastRun() {
+  if (!state.lastRunId) {
+    throw new Error("No WorkflowDirector run has been started in this tab.");
+  }
+  return await fetchRunStatus(state.lastRunId);
+}
+
 async function startRun(steps) {
   if (state.isRunning) {
     throw new Error("A WorkflowDirector lab run is already active.");
@@ -128,7 +152,8 @@ async function startRun(steps) {
   state.isRunning = true;
   refreshAllPanels();
 
-  const response = await api.fetchApi("/workflowdirector/runs", {
+  try {
+    const response = await api.fetchApi("/workflowdirector/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -137,47 +162,38 @@ async function startRun(steps) {
     }),
   });
 
-  const body = await response.json();
-  if (!response.ok) {
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body?.error ?? "HTTP " + response.status);
+    }
+
+    state.lastRunId = body.run_id;
+    state.lastRun = body;
+    state.pollToken += 1;
+    const token = state.pollToken;
+    refreshAllPanels();
+    notify("info", "WorkflowDirector run started", body.run_id);
+
+    while (token === state.pollToken) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const statusBody = await fetchRunStatus(body.run_id);
+
+      const phase = statusBody?.record?.phase;
+      if (["completed", "failed", "cancelled"].includes(phase)) {
+        state.isRunning = false;
+        refreshAllPanels();
+        notify(
+          phase === "completed" ? "success" : "error",
+          "WorkflowDirector run " + phase,
+          statusBody?.record?.failure_detail ?? ""
+        );
+        return;
+      }
+    }
+  } catch (error) {
     state.isRunning = false;
     refreshAllPanels();
-    throw new Error(body?.error ?? "HTTP " + response.status);
-  }
-
-  state.lastRunId = body.run_id;
-  state.lastRun = body;
-  state.pollToken += 1;
-  const token = state.pollToken;
-  refreshAllPanels();
-  notify("info", "WorkflowDirector run started", body.run_id);
-
-  while (token === state.pollToken) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    const statusResponse = await api.fetchApi(
-      "/workflowdirector/runs/" + encodeURIComponent(body.run_id),
-      { cache: "no-store" }
-    );
-    const statusBody = await statusResponse.json();
-
-    if (!statusResponse.ok) {
-      throw new Error(statusBody?.error ?? "HTTP " + statusResponse.status);
-    }
-
-    state.lastRun = statusBody;
-    refreshAllPanels();
-
-    const phase = statusBody?.record?.phase;
-    if (["completed", "failed", "cancelled"].includes(phase)) {
-      state.isRunning = false;
-      refreshAllPanels();
-      notify(
-        phase === "completed" ? "success" : "error",
-        "WorkflowDirector run " + phase,
-        statusBody?.record?.failure_detail ?? ""
-      );
-      return;
-    }
+    throw error;
   }
 }
 
@@ -240,6 +256,13 @@ function renderPanel(root) {
       "Run A → B",
       () => startRun([state.A, state.B]),
       !state.A || !state.B || state.isRunning
+    )
+  );
+  captures.appendChild(
+    button(
+      "Refresh last run",
+      () => refreshLastRun(),
+      !state.lastRunId || state.isRunning
     )
   );
   root.appendChild(captures);
