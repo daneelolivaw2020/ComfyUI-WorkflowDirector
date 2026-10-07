@@ -305,3 +305,53 @@ is now defaults observation -> --cache-none observation -> reference diagnosis
 The non-destructive observer now records POST_IMMEDIATE and POST_WINDOW_END.
 A configured idle window can span normal housekeeping, but a timer alone does
 not prove that memory has reached a stable fixed point.
+
+
+### Finding 21 — browser client id was incorrectly placed in immutable RunPlan
+
+**Status: fixed.**
+
+client_id is ephemeral WebSocket/progress routing state and may change after a
+frontend reconnect. It is now supplied at run time and is not part of RunPlan.
+
+### Finding 22 — job timeout was expressed as a poll count
+
+**Status: fixed.**
+
+A fixed number of polls couples maximum Workflow duration to poll frequency and
+is especially undesirable on a constrained T4. Director waits now use monotonic
+elapsed-time deadlines.
+
+### Finding 23 — response-body transport loss could be misclassified as a protocol error
+
+**Status: fixed and covered by CI tests.**
+
+If /prompt is accepted but the HTTP body is truncated, the job may already
+exist. aiohttp transport errors while reading the response now preserve
+SubmissionTransportError semantics so UUID recovery is used.
+
+### Finding 24 — service-owned live state needed an explicit engine contract
+
+**Status: fixed.**
+
+DirectorRunService owns the RunRecord exposed to future UI/status routes.
+DirectorEngine mutates that same object. Returning a replacement record or
+returning while the record is still READY/RUNNING is converted to an explicit
+service failure.
+
+### Finding 25 — two Director runs could interleave
+
+**Status: fixed for WorkflowDirector-owned runs.**
+
+DirectorRunService permits only one active Master run.
+
+### Finding 26 — unrelated native Comfy jobs could already occupy the queue
+
+**Status: partially fixed for Phase 1.**
+
+Before every Workflow submission the Director queries the native Jobs API for
+pending/in_progress jobs and refuses to submit unless the queue window is empty.
+
+Continuous monitoring across a future long memory-observation boundary remains
+to be added in Phase 2. Auto Queue/manual queueing must remain disabled during
+the Phase 1 laboratory.
