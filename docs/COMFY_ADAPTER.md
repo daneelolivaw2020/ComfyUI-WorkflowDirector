@@ -104,8 +104,12 @@ silently change the maximum Workflow duration.
 WorkflowDirector's own /workflowdirector/memory endpoint remains read-only
 instrumentation.
 
-The memory barrier policy is separate from the execution adapter. Native /free
-experiments belong in the boundary observer, not in submit/get-job logic.
+The memory barrier policy is separate from the execution adapter.
+
+For the currently audited ComfyUI release, native /free is **not** treated as a
+safe cache-only primitive: free_memory=true leads the prompt worker to
+unload_all_models(). It is therefore excluded from the initial barrier
+implementation.
 
 ## Future compatibility
 
