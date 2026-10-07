@@ -341,6 +341,43 @@ class DirectorEngine:
                 )
             )
 
+    async def _ensure_only_expected_job_active(
+        self,
+        *,
+        record: RunRecord,
+        attempt: JobAttemptRecord,
+    ) -> bool:
+        """Fail closed if another Comfy job appears while ours is active."""
+
+        try:
+            active_ids = await self._adapter.get_active_job_ids()
+        except AdapterTransportError as exc:
+            record.fail(
+                "QUEUE_STATE_UNCERTAIN",
+                f"Could not verify active Comfy jobs during execution: {exc}",
+            )
+            return False
+        except Exception as exc:
+            record.fail(
+                "QUEUE_STATE_FAILED",
+                f"{type(exc).__name__}: {exc}",
+            )
+            return False
+
+        foreign_ids = active_ids - {attempt.job_id}
+        if foreign_ids:
+            record.fail(
+                "QUEUE_INTERFERENCE",
+                (
+                    f"Unexpected Comfy job(s) appeared while step "
+                    f"{attempt.step_id} was active: "
+                    + ", ".join(sorted(foreign_ids))
+                ),
+            )
+            return False
+
+        return True
+
     async def _wait_for_terminal(
         self,
         *,
@@ -377,6 +414,17 @@ class DirectorEngine:
                         detail=state.value,
                     )
                     last_state = state
+
+                if state not in {
+                    JobState.COMPLETED,
+                    JobState.FAILED,
+                    JobState.CANCELLED,
+                }:
+                    if not await self._ensure_only_expected_job_active(
+                        record=record,
+                        attempt=attempt,
+                    ):
+                        return None
 
                 if state in {
                     JobState.COMPLETED,
