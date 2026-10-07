@@ -150,11 +150,44 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapter.submissions, [a, b])
         self.assertTrue(any(e.kind == "submission_recovered" for e in record.events))
 
+    async def test_lost_ack_tolerates_temporary_unknown_visibility(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        b = make_job_id(plan.run_id, "B", 1)
+        adapter = FakeAdapter(
+            {
+                a: [
+                    JobState.UNKNOWN,
+                    JobState.UNKNOWN,
+                    JobState.IN_PROGRESS,
+                    JobState.COMPLETED,
+                ],
+                b: [JobState.COMPLETED],
+            },
+            lose_ack_for={a},
+        )
+        engine = DirectorEngine(
+            adapter,
+            poll_interval_seconds=0,
+            submission_recovery_polls=3,
+            sleep=no_sleep,
+        )
+
+        record = await engine.run(plan)
+
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(adapter.submissions, [a, b])
+
     async def test_unknown_lost_submission_is_never_blindly_retried(self):
         plan = make_plan()
         a = make_job_id(plan.run_id, "A", 1)
         adapter = FakeAdapter({}, lose_ack_for={a})
-        engine = DirectorEngine(adapter, poll_interval_seconds=0, sleep=no_sleep)
+        engine = DirectorEngine(
+            adapter,
+            poll_interval_seconds=0,
+            submission_recovery_polls=3,
+            sleep=no_sleep,
+        )
 
         record = await engine.run(plan)
 
@@ -179,6 +212,16 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.phase, RunPhase.FAILED)
         self.assertEqual(record.failure_code, "BOUNDARY_FAILED")
         self.assertEqual(adapter.submissions, [a])
+
+    async def test_prepared_prompt_is_snapshot_not_caller_owned_dict(self):
+        source = {"1": {"class_type": "Original", "inputs": {"value": 1}}}
+        step = PreparedStep("A", "workflow-a", "Workflow A", source)
+
+        source["1"]["class_type"] = "Mutated"
+        first_read = step.prompt
+        first_read["1"]["class_type"] = "Also Mutated"
+
+        self.assertEqual(step.prompt["1"]["class_type"], "Original")
 
     async def test_job_id_is_stable_for_same_run_step_attempt(self):
         run_id = str(uuid.uuid4())
