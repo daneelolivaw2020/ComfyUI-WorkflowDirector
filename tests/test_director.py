@@ -19,8 +19,28 @@ from workflowdirector.core import (
 )
 
 
-async def no_sleep(_seconds):
-    return None
+class FakeTime:
+    def __init__(self):
+        self.now = 0.0
+
+    def clock(self):
+        return self.now
+
+    async def sleep(self, seconds):
+        self.now += max(seconds, 0.001)
+
+
+def make_engine(adapter, *, boundary=None, job_timeout=10.0, recovery_timeout=1.0):
+    fake_time = FakeTime()
+    return DirectorEngine(
+        adapter,
+        boundary_observer=boundary,
+        poll_interval_seconds=0.1,
+        job_timeout_seconds=job_timeout,
+        submission_recovery_timeout_seconds=recovery_timeout,
+        sleep=fake_time.sleep,
+        clock=fake_time.clock,
+    )
 
 
 class FakeAdapter:
@@ -114,12 +134,7 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         boundary = FakeBoundary()
-        engine = DirectorEngine(
-            adapter,
-            boundary_observer=boundary,
-            poll_interval_seconds=0,
-            sleep=no_sleep,
-        )
+        engine = make_engine(adapter, boundary=boundary)
 
         record = await engine.run(plan)
 
@@ -139,7 +154,7 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         plan = make_plan()
         a = make_job_id(plan.run_id, "A", 1)
         adapter = FakeAdapter({a: [JobState.IN_PROGRESS, JobState.FAILED]})
-        engine = DirectorEngine(adapter, poll_interval_seconds=0, sleep=no_sleep)
+        engine = make_engine(adapter)
 
         record = await engine.run(plan)
 
@@ -193,12 +208,7 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
             },
             lose_ack_for={a},
         )
-        engine = DirectorEngine(
-            adapter,
-            poll_interval_seconds=0,
-            submission_recovery_polls=3,
-            sleep=no_sleep,
-        )
+        engine = make_engine(adapter, recovery_timeout=0.3)
 
         record = await engine.run(plan)
 
@@ -248,18 +258,40 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         a = make_job_id(plan.run_id, "A", 1)
         adapter = FakeAdapter({a: [JobState.COMPLETED]})
         boundary = FakeBoundary(fail_on_step="A")
-        engine = DirectorEngine(
-            adapter,
-            boundary_observer=boundary,
-            poll_interval_seconds=0,
-            sleep=no_sleep,
-        )
+        engine = make_engine(adapter, boundary=boundary)
 
         record = await engine.run(plan)
 
         self.assertEqual(record.phase, RunPhase.FAILED)
         self.assertEqual(record.failure_code, "BOUNDARY_FAILED")
         self.assertEqual(adapter.submissions, [a])
+
+    async def test_client_id_is_runtime_routing_not_runplan_state(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        b = make_job_id(plan.run_id, "B", 1)
+        adapter = FakeAdapter(
+            {
+                a: [JobState.COMPLETED],
+                b: [JobState.COMPLETED],
+            }
+        )
+        submitted_clients = []
+
+        original_submit = adapter.submit_prompt
+
+        async def capture_submit(**kwargs):
+            submitted_clients.append(kwargs["client_id"])
+            return await original_submit(**kwargs)
+
+        adapter.submit_prompt = capture_submit
+        engine = make_engine(adapter)
+
+        record = await engine.run(plan, client_id="browser-session")
+
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(submitted_clients, ["browser-session", "browser-session"])
+        self.assertFalse(hasattr(plan, "client_id"))
 
     async def test_prepared_prompt_is_snapshot_not_caller_owned_dict(self):
         source = {"1": {"class_type": "Original", "inputs": {"value": 1}}}
@@ -303,6 +335,18 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(plan.run_id, encoded)
         self.assertIn("completed", encoded)
+
+    async def test_job_timeout_uses_monotonic_time_not_poll_count(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        adapter = FakeAdapter({a: [JobState.IN_PROGRESS]})
+        engine = make_engine(adapter, job_timeout=0.3)
+
+        record = await engine.run(plan)
+
+        self.assertEqual(record.phase, RunPhase.FAILED)
+        self.assertEqual(record.failure_code, "JOB_STATUS_TIMEOUT")
+        self.assertEqual(adapter.submissions, [a])
 
     async def test_job_id_is_stable_for_same_run_step_attempt(self):
         run_id = str(uuid.uuid4())
