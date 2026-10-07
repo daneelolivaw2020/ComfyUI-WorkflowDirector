@@ -2,17 +2,39 @@
 
 from __future__ import annotations
 
+import os
+
 from server import PromptServer
 
+from .boundary import ObservationBoundary, SnapshotRunObserver
 from .comfy_http import ComfyHttpAdapter
 from .core import DirectorEngine, DirectorRunService
+from .memory import memory_snapshot
 
 
 _service: DirectorRunService | None = None
 
-# Phase 1 intentionally proves sequencing only. Memory observation/cleanup is
-# connected in Phase 2 after the basic two-job path succeeds.
-BOUNDARY_MODE = "noop-phase1"
+BOUNDARY_MODE = "observe-phase2-nondestructive"
+_DEFAULT_OBSERVATION_WINDOW_SECONDS = 1.0
+
+
+def observation_window_seconds() -> float:
+    raw = os.environ.get(
+        "WORKFLOWDIRECTOR_OBSERVATION_SECONDS",
+        str(_DEFAULT_OBSERVATION_WINDOW_SECONDS),
+    )
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            "WORKFLOWDIRECTOR_OBSERVATION_SECONDS must be a number"
+        ) from exc
+
+    if value < 0:
+        raise RuntimeError(
+            "WORKFLOWDIRECTOR_OBSERVATION_SECONDS must be >= 0"
+        )
+    return value
 
 
 def get_director_service() -> DirectorRunService:
@@ -38,6 +60,20 @@ def get_director_service() -> DirectorRunService:
         base_url=base_url,
         session=session,
     )
-    engine = DirectorEngine(adapter)
+    run_observer = SnapshotRunObserver(
+        snapshot=memory_snapshot,
+        warm_up=True,
+    )
+    boundary_observer = ObservationBoundary(
+        snapshot=memory_snapshot,
+        observation_window_seconds=observation_window_seconds(),
+        sample_interval_seconds=0.25,
+        active_jobs=adapter.get_active_job_ids,
+    )
+    engine = DirectorEngine(
+        adapter,
+        run_observer=run_observer,
+        boundary_observer=boundary_observer,
+    )
     _service = DirectorRunService(engine)
     return _service
