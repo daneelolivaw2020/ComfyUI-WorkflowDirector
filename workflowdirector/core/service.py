@@ -103,11 +103,22 @@ class DirectorRunService:
         client_id: str | None,
     ) -> None:
         try:
-            await self._engine.run(
+            result = await self._engine.run(
                 plan,
                 client_id=client_id,
                 record=record,
             )
+
+            if result is not record:
+                record.fail(
+                    "ENGINE_RECORD_MISMATCH",
+                    "Director engine returned a different RunRecord object",
+                )
+            elif record.phase in {RunPhase.READY, RunPhase.RUNNING}:
+                record.fail(
+                    "ENGINE_NON_TERMINAL",
+                    "Director engine returned without a terminal run phase",
+                )
         except asyncio.CancelledError:
             if record.phase in {RunPhase.READY, RunPhase.RUNNING}:
                 record.phase = RunPhase.CANCELLED
