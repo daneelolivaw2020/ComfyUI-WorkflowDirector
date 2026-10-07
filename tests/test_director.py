@@ -81,6 +81,23 @@ class FakeAdapter:
         return self.last_state.get(prompt_id, JobState.UNKNOWN)
 
 
+class FakeRunObserver:
+    def __init__(self, fail=False):
+        self.calls = 0
+        self.fail = fail
+
+    async def before_run(self, *, plan):
+        self.calls += 1
+        if self.fail:
+            raise RuntimeError("simulated baseline failure")
+        return [
+            MemoryObservation.capture(
+                "BASELINE",
+                {"test": True, "run_id": plan.run_id},
+            )
+        ]
+
+
 class FakeBoundary:
     def __init__(self, fail_on_step=None):
         self.calls = []
@@ -124,6 +141,7 @@ def make_engine(
     adapter,
     *,
     boundary=None,
+    run_observer=None,
     job_timeout=10.0,
     recovery_timeout=1.0,
 ):
@@ -131,6 +149,7 @@ def make_engine(
     return DirectorEngine(
         adapter,
         boundary_observer=boundary,
+        run_observer=run_observer,
         poll_interval_seconds=0.1,
         job_timeout_seconds=job_timeout,
         submission_recovery_timeout_seconds=recovery_timeout,
@@ -282,7 +301,7 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         a = make_job_id(plan.run_id, "A", 1)
         adapter = FakeAdapter(
             {a: [JobState.COMPLETED]},
-            active_job_sequences=[set(), {"foreign-job"}],
+            active_job_sequences=[set(), set(), {"foreign-job"}],
         )
         boundary = FakeBoundary()
 
@@ -291,6 +310,50 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.phase, RunPhase.FAILED)
         self.assertEqual(record.failure_code, "QUEUE_NOT_EXCLUSIVE")
         self.assertEqual(adapter.submissions, [a])
+
+    async def test_run_baseline_is_captured_before_first_submission(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        b = make_job_id(plan.run_id, "B", 1)
+        adapter = FakeAdapter(
+            {
+                a: [JobState.COMPLETED],
+                b: [JobState.COMPLETED],
+            }
+        )
+        observer = FakeRunObserver()
+
+        record = await make_engine(
+            adapter,
+            run_observer=observer,
+        ).run(plan)
+
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(observer.calls, 1)
+        self.assertEqual(
+            [item.label for item in record.observations],
+            ["BASELINE"],
+        )
+
+        kinds = [event.kind for event in record.events]
+        self.assertLess(
+            kinds.index("run_observer_completed"),
+            kinds.index("submission_started"),
+        )
+
+    async def test_run_observer_failure_prevents_any_submission(self):
+        plan = make_plan()
+        adapter = FakeAdapter({})
+        observer = FakeRunObserver(fail=True)
+
+        record = await make_engine(
+            adapter,
+            run_observer=observer,
+        ).run(plan)
+
+        self.assertEqual(record.phase, RunPhase.FAILED)
+        self.assertEqual(record.failure_code, "RUN_OBSERVER_FAILED")
+        self.assertEqual(adapter.submissions, [])
 
     async def test_boundary_failure_prevents_next_workflow(self):
         plan = make_plan()
