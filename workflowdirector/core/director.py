@@ -37,17 +37,21 @@ class DirectorEngine:
         boundary_observer: BoundaryObserver | None = None,
         poll_interval_seconds: float = 0.25,
         max_polls_per_job: int = 2400,
+        submission_recovery_polls: int = 20,
         sleep: SleepFn = asyncio.sleep,
     ) -> None:
         if poll_interval_seconds < 0:
             raise ValueError("poll_interval_seconds must be >= 0")
         if max_polls_per_job < 1:
             raise ValueError("max_polls_per_job must be >= 1")
+        if submission_recovery_polls < 1:
+            raise ValueError("submission_recovery_polls must be >= 1")
 
         self._adapter = adapter
         self._boundary = boundary_observer or NoopBoundaryObserver()
         self._poll_interval = poll_interval_seconds
         self._max_polls = max_polls_per_job
+        self._submission_recovery_polls = submission_recovery_polls
         self._sleep = sleep
 
     async def run(self, plan: RunPlan) -> RunRecord:
@@ -153,26 +157,12 @@ class DirectorEngine:
                 job_id=job_id,
                 detail=str(exc),
             )
-            try:
-                state = await self._adapter.get_job_state(job_id)
-            except Exception as lookup_exc:
-                record.fail(
-                    "SUBMISSION_UNCERTAIN",
-                    (
-                        "Submission acknowledgement was lost and job lookup "
-                        f"also failed: {type(lookup_exc).__name__}: {lookup_exc}"
-                    ),
-                )
-                return False
-
-            if state == JobState.UNKNOWN:
-                record.fail(
-                    "SUBMISSION_UNCERTAIN",
-                    (
-                        "Submission acknowledgement was lost and the prepared "
-                        f"job id {job_id} is not observable. Refusing to resubmit."
-                    ),
-                )
+            state = await self._wait_for_submission_visibility(
+                record=record,
+                step_id=step_id,
+                job_id=job_id,
+            )
+            if state is None:
                 return False
 
             record.event(
