@@ -129,6 +129,10 @@ class MemoryAnalysisTests(unittest.TestCase):
         summary = summarize_run_memory(record)
 
         self.assertTrue(summary["baseline_found"])
+        self.assertEqual(
+            summary["baseline"]["metrics"]["cuda_reserved_gib"]["delta"],
+            0.0,
+        )
         observations = summary["steps"][0]["observations"]
         self.assertEqual(observations[0]["label"], "POST_IMMEDIATE")
         self.assertEqual(observations[1]["label"], "POST_WINDOW_END")
