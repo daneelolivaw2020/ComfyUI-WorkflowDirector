@@ -34,6 +34,7 @@ Testing starts with a minimal ComfyUI installation and very small workflows. Onl
 See:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Validation plan](docs/VALIDATION_PLAN.md)
+- [Phase 0 lab](docs/PHASE0_LAB.md)
 
 ## Status
 
