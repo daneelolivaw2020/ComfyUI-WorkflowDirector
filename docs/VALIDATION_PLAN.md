@@ -66,6 +66,59 @@ No heavy models are needed yet.
 
 ## Phase 2 — Memory boundary
 
+### First real model test
+
+The first meaningful memory test must produce a real image. Loader nodes alone
+are not sufficient because model movement/loading may be deferred until use.
+
+Workflow A must genuinely exercise:
+
+- GGUF diffusion-model loader;
+- GGUF text-encoder loader;
+- text encoding;
+- VAE loader;
+- sampler;
+- VAE decode;
+- image preview/save.
+
+For the target case, use Klein Q6, the intended Qwen text encoder, and the same
+known-working VAE/model-specific sampling path as the production workflow.
+
+Workflow A contains **no unload node**. It finishes normally.
+
+Sequence:
+
+    CUDA warm-up
+        |
+    BASELINE memory snapshot
+        |
+    Workflow A: real image
+        |
+    native Jobs API = completed
+        |
+    POST_A memory snapshot outside the workflow
+        |
+    Workflow B: second independent real image
+        |
+    native Jobs API = completed
+        |
+    POST_B memory snapshot
+
+Do not pre-queue Workflow B. Do not perform custom cleanup in the first
+experiment.
+
+For the first lifecycle test, omit LoRAs unless required. Once this passes,
+repeat with LoRA stack A in Workflow A and LoRA stack B in Workflow B.
+
+Interpret memory using process RSS, cgroup-aware RAM headroom, PyTorch allocated
+and reserved VRAM, and device-global used/free VRAM. Reserved VRAM alone is not
+proof that a model remains live.
+
+The functional pass condition is that Workflow B can execute safely after A on
+Colab Free T4 without host-RAM spike, OOM, or kernel restart. If retained memory
+makes B fail, then proceed to controlled cleanup experiments.
+
+
 Goal: determine what current ComfyUI already releases naturally between two
 independent top-level jobs.
 
