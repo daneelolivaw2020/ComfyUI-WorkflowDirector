@@ -7,7 +7,11 @@ from typing import Any, Mapping, Protocol, Sequence
 from .types import JobState, MemoryObservation, PreparedStep
 
 
-class SubmissionTransportError(RuntimeError):
+class AdapterTransportError(RuntimeError):
+    """Transient transport/connectivity failure talking to the Comfy backend."""
+
+
+class SubmissionTransportError(AdapterTransportError):
     """Submission may have reached ComfyUI but its acknowledgement was lost."""
 
 
