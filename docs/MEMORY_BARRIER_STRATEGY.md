@@ -57,10 +57,11 @@ The worker uses a 10-second GC interval.
 Therefore the laboratory records at least:
 
     POST_A_IMMEDIATE
-    POST_A_SETTLED
+    POST_A_WINDOW_END
 
-with the second observation taken after sufficient idle time for normal worker
-housekeeping to run.
+with the second observation taken after an explicit lab observation window.
+The label does not claim that memory is mathematically stable; it marks the end
+of the configured observation window.
 
 Workflow B is not queued during this observation window.
 
@@ -73,7 +74,7 @@ After Workflow A reaches completed:
 1. do not unload anything;
 2. take POST_A_IMMEDIATE;
 3. remain idle;
-4. take POST_A_SETTLED;
+4. take POST_A_WINDOW_END;
 5. interpret cache retention separately from actual memory pressure;
 6. only then decide whether to submit B.
 
@@ -100,16 +101,29 @@ Question:
 
 Do not add unload nodes.
 
+## Native /free is not the safe cache-only primitive
+
+In ComfyUI v0.39.0, /free with free_memory=true ultimately reaches
+unload_all_models() through the prompt worker's fallback:
+
+    flags.get("unload_models", free_memory)
+
+The HTTP route only records true flags, so supplying unload_models=false does
+not create an independent cache-only mode.
+
+WorkflowDirector therefore excludes /free from the initial safe barrier.
+
 ## Barrier 2 — Safe post-job cleanup experiment
 
-Only if the cache-isolation experiment still leaves problematic memory, test a
-dedicated post-job cleanup step.
+Only if the cache-isolation experiment still leaves problematic memory, design a
+dedicated post-job cleanup step that does **not** route through /free or
+unload_all_models().
 
-Candidate operations are limited initially to:
+Candidate operations may include, after source review and isolated testing:
 
 - Python garbage collection;
-- Comfy dead-model cleanup;
-- soft CUDA/PyTorch cache cleanup and synchronization.
+- cleanup of references already proven dead;
+- soft CUDA/PyTorch allocator cleanup and synchronization.
 
 Do not start by calling model_unload(), unload_all_models(), detach(), custom
 HardDelete logic or forced CPU offload.
