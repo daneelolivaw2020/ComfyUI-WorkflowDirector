@@ -81,6 +81,8 @@ See:
 - [Phase 0 lab](docs/PHASE0_LAB.md)
 - [Code review protocol](docs/CODE_REVIEW_PROTOCOL.md)
 - [Memory barrier strategy](docs/MEMORY_BARRIER_STRATEGY.md)
+- [Context residency](docs/CONTEXT_RESIDENCY.md)
+- [Model file locations](docs/MODEL_FILE_LOCATIONS.md)
 
 ## Status
 
