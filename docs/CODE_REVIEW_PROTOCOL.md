@@ -1,21 +1,23 @@
 # Code Review Protocol
 
-WorkflowDirector is being built around a memory-lifecycle problem, so every
-non-trivial code change should pass two distinct reviews before it is considered
-ready for a Colab test.
+WorkflowDirector is built around execution and memory lifecycle, so every
+non-trivial change passes two distinct reviews before it is considered ready for
+a Colab test.
 
-## Review A — Compatibility and correctness
+## Review A — Current compatibility and correctness
 
-Check the code against the pinned ComfyUI version used by the laboratory.
+Review against the **current stable ComfyUI release tag**, never against an old
+release merely because it was previously used.
 
 Questions include:
 
-- Does the ComfyUI API actually exist in the pinned version?
-- Is the custom-node loading mechanism valid?
+- Is this the current official stable release?
+- Does the ComfyUI API actually exist in that release?
+- Are we using the current API instead of a supported-but-legacy path?
 - Are execution/cache semantics being interpreted correctly?
-- Are metrics labelled according to what they really measure?
-- Can unchanged nodes be cached when the test requires re-execution?
-- Are imports/dependencies already supplied by the pinned ComfyUI build?
+- Are metrics labelled according to what they actually measure?
+- Are dependencies already supplied by current ComfyUI?
+- Can a public/native Comfy interface replace an internal implementation detail?
 
 ## Review B — Adversarial lifecycle and failure review
 
@@ -24,74 +26,89 @@ Assume the happy path is misleading.
 Questions include:
 
 - Could ComfyUI still hold references after the event we call "finished"?
-- Could a measurement itself change CUDA state?
+- Are we confusing live WebSocket events with durable terminal job state?
+- Could a measurement itself initialize or perturb CUDA state?
 - Are we confusing PyTorch allocator memory with total device usage?
-- Could a partial failure mutate persistent state?
-- Could cleanup run concurrently with an active prompt?
-- Could an identical prompt be served from cache and invalidate the experiment?
-- Is the worker idle while another prompt is already pending?
-- What happens if ComfyUI, the backend process, or the Colab kernel dies?
+- Could a partial failure mutate persistent Context?
+- Could cleanup overlap a running or queued successor workflow?
+- Could caching invalidate the experiment?
+- Are we carrying diagnostic flags from an obsolete environment?
+- What happens if ComfyUI, the backend process or the Colab kernel dies?
 
-## Phase 0 review findings
+## Current audit — ComfyUI v0.39.0
 
-### Finding 1 — Test Marker could be cached
+Audit date: 2026-10-07.
+
+### Finding 1 — v0.38.0 was no longer latest
+
+**Status: corrected.**
+
+The project policy is latest stable. The official latest release on the audit
+date is v0.39.0, so the current audit targets v0.39.0 rather than v0.38.0.
+
+### Finding 2 — node registration used the legacy V1 API
 
 **Status: fixed.**
 
-The original marker had no IS_CHANGED implementation. Repeated identical queues
-could therefore reuse cached output instead of executing the marker and taking
-a fresh measurement.
+V1 NODE_CLASS_MAPPINGS remains supported, but the current official example uses
+the V3 ComfyExtension / io.ComfyNode API. The Phase 0 node and package entrypoint
+now use V3.
 
-The node now returns NaN from IS_CHANGED, forcing execution on every run.
-
-### Finding 2 — Process RSS alone is insufficient
+### Finding 3 — custom queue-status route duplicated internal state
 
 **Status: fixed.**
 
-The original instrumentation measured process RSS but not the cgroup-aware
-system RAM headroom that matters on Colab. It now uses ComfyUI's
-comfy.system_memory.virtual_memory_total() and virtual_memory_available(), plus
-process RSS.
+The earlier diagnostic route read PromptQueue internals directly. ComfyUI v0.39
+has a native Jobs API with explicit pending, in_progress, completed, failed and
+cancelled states. WorkflowDirector now intends to use that API for job lifecycle
+and no longer exposes its own queue-status route.
 
-CUDA metrics explicitly distinguish PyTorch allocated/reserved memory from
-device-global used/free memory.
+### Finding 4 — execution_success is still too early
 
-### Finding 3 — execution_success is too early for the Memory Barrier
+**Status: architecture corrected.**
 
-**Status: architecture corrected; implementation intentionally deferred.**
+In v0.39.0, execution_success is emitted before the PromptExecutor finalizer.
+The finalizer then runs prompt_model_tracker.end() and lifecycle end handling.
+Only after PromptExecutor returns does the worker call task_done(), placing the
+job in history.
 
-In ComfyUI v0.37.0, execution_success is emitted inside
-PromptExecutor.execute_async(). Its finally block runs afterwards and calls
-prompt_model_tracker.end(). Only after that does PromptExecutor.execute() return
-to the queue worker, which commits history and removes the prompt from the
-running set.
+Therefore:
 
-Therefore WorkflowDirector must not begin memory cleanup merely because it saw
-execution_success. The first Memory Barrier prototype must verify that the
-prompt is no longer running.
+- WebSocket execution_success is useful live feedback;
+- native Jobs API terminal state is the Master sequencing/commit signal.
 
-### Finding 4 — "No running prompt" is not the same as "queue empty"
+### Finding 5 — old diagnostic memory flags would bias the new baseline
 
-**Status: fixed in diagnostics.**
+**Status: corrected in the validation plan.**
 
-The diagnostic status route now reports worker_idle and queue_empty separately.
-The future Memory Barrier should require that its target prompt is no longer
-running and, in the one-at-a-time Master design, that no successor prompt has
-already been queued.
+Current ComfyUI uses RAM-pressure caching by default and can enable DynamicVRAM
+on supported NVIDIA systems. The clean lab now starts with current defaults.
+Flags such as --cache-none or --disable-dynamic-vram are tested only as isolated
+diagnostic variables if needed.
 
-### Finding 5 — the first CUDA measurement can perturb the baseline
+### Finding 6 — memory measurements needed to follow Comfy's selected device
 
-**Status: accounted for in the lab procedure.**
+**Status: fixed.**
 
-The lab now performs one warm-up memory query before recording the baseline.
-This prevents CUDA-context initialization from being mistaken for model memory.
+The instrumentation now queries the device selected by ComfyUI rather than
+assuming the process's current CUDA device is necessarily the target device.
 
-### Compatibility checks passed
+### Finding 7 — first CUDA measurement can perturb the baseline
 
-For ComfyUI v0.37.0:
+**Status: accounted for.**
 
-- legacy NODE_CLASS_MAPPINGS custom-node registration is still supported;
-- PromptServer.instance.routes is a supported custom-route pattern;
-- PromptQueue.get_current_queue_volatile() exists;
-- prompt queue items store prompt_id at index 1 in the /prompt path;
-- psutil is present in ComfyUI's pinned requirements.
+Phase 0 performs one warm-up memory query and records the second reading as the
+baseline.
+
+### Current compatibility checks passed
+
+Verified against the v0.39.0 source:
+
+- V3 ComfyExtension / io.ComfyNode registration exists;
+- output nodes with outputs=[] are supported;
+- fingerprint_inputs can force re-execution;
+- custom routes through PromptServer.instance.routes are supported;
+- comfyui_version.__version__ is available;
+- native /api/jobs/{job_id} support is present;
+- cgroup-aware RAM helpers are present;
+- psutil remains a ComfyUI dependency.
