@@ -1,6 +1,6 @@
 """Core immutable/mutable records for WorkflowDirector.
 
-This module deliberately has no dependency on ComfyUI.  The core state machine
+This module deliberately has no dependency on ComfyUI. The core state machine
 can therefore be unit-tested without a GPU or a running Comfy backend.
 """
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Mapping
+import json
 import time
 import uuid
 
@@ -30,14 +31,47 @@ class RunPhase(str, Enum):
     COMPLETED = "completed"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class PreparedStep:
-    """One immutable workflow execution inside a prepared RunPlan."""
+    """One immutable workflow execution inside a prepared RunPlan.
+
+    The executable prompt is stored as canonical JSON instead of as a caller-
+    owned dict. Accessing the prompt property returns a fresh decoded object, so
+    edits elsewhere cannot mutate an already-prepared run.
+    """
 
     step_id: str
     workflow_id: str
     name: str
-    prompt: Mapping[str, Any]
+    _prompt_json: str = field(repr=False)
+
+    def __init__(
+        self,
+        step_id: str,
+        workflow_id: str,
+        name: str,
+        prompt: Mapping[str, Any],
+    ) -> None:
+        if not step_id:
+            raise ValueError("step_id cannot be empty")
+        if not workflow_id:
+            raise ValueError("workflow_id cannot be empty")
+
+        encoded = json.dumps(
+            prompt,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        object.__setattr__(self, "step_id", step_id)
+        object.__setattr__(self, "workflow_id", workflow_id)
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "_prompt_json", encoded)
+
+    @property
+    def prompt(self) -> Mapping[str, Any]:
+        return json.loads(self._prompt_json)
 
 
 @dataclass(frozen=True)
@@ -49,6 +83,7 @@ class RunPlan:
 
     def __post_init__(self) -> None:
         uuid.UUID(self.run_id)
+        object.__setattr__(self, "steps", tuple(self.steps))
 
         if not self.steps:
             raise ValueError("RunPlan requires at least one step")
@@ -57,24 +92,13 @@ class RunPlan:
         if len(step_ids) != len(set(step_ids)):
             raise ValueError("RunPlan step_id values must be unique")
 
-        for step in self.steps:
-            if not step.step_id:
-                raise ValueError("step_id cannot be empty")
-            if not step.workflow_id:
-                raise ValueError("workflow_id cannot be empty")
-
     @classmethod
     def create(cls, steps: tuple[PreparedStep, ...]) -> "RunPlan":
         return cls(run_id=str(uuid.uuid4()), steps=steps)
 
 
 def make_job_id(run_id: str, step_id: str, attempt: int) -> str:
-    """Return a stable UUID for one run/step/attempt.
-
-    The id is computed before submission and can be persisted.  Re-evaluating
-    the same tuple returns the same id, which makes an ambiguous network
-    acknowledgement recoverable without blindly submitting a duplicate job.
-    """
+    """Return a stable UUID for one run/step/attempt."""
 
     if attempt < 1:
         raise ValueError("attempt must be >= 1")
