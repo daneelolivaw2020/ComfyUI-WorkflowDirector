@@ -64,6 +64,7 @@ class DirectorEngine:
         plan: RunPlan,
         *,
         client_id: str | None = None,
+        record: RunRecord | None = None,
     ) -> RunRecord:
         """Execute one prepared plan.
 
@@ -71,7 +72,15 @@ class DirectorEngine:
         part of the immutable RunPlan.
         """
 
-        record = RunRecord(run_id=plan.run_id, phase=RunPhase.RUNNING)
+        if record is None:
+            record = RunRecord(run_id=plan.run_id)
+
+        if record.run_id != plan.run_id:
+            raise ValueError("RunRecord run_id must match RunPlan run_id")
+        if record.phase != RunPhase.READY:
+            raise ValueError("RunRecord must be READY before execution starts")
+
+        record.phase = RunPhase.RUNNING
         record.event("run_started")
 
         for index, step in enumerate(plan.steps):
