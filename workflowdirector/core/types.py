@@ -158,6 +158,7 @@ class RunRecord:
     phase: RunPhase = RunPhase.READY
     current_step_index: int | None = None
     attempts: list[JobAttemptRecord] = field(default_factory=list)
+    observations: list[MemoryObservation] = field(default_factory=list)
     events: list[RunEvent] = field(default_factory=list)
     failure_code: str | None = None
     failure_detail: str | None = None
