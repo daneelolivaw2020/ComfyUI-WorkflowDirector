@@ -11,6 +11,7 @@ from server import PromptServer
 from . import VERSION
 from .core import ActiveRunError, DuplicateRunError, RunNotFoundError
 from .memory import memory_snapshot
+from .memory_analysis import summarize_run_memory
 from .run_api import RunRequestError, parse_run_request
 from .runtime import (
     BOUNDARY_MODE,
@@ -96,6 +97,7 @@ async def workflowdirector_start_run(request):
             "boundary_mode": BOUNDARY_MODE,
             "observation_window_seconds": effective_observation_window_seconds(),
             "record": record.to_dict(),
+            "memory_summary": summarize_run_memory(record),
         },
         status=202,
     )
@@ -126,5 +128,6 @@ async def workflowdirector_get_run(request):
             "boundary_mode": BOUNDARY_MODE,
             "observation_window_seconds": effective_observation_window_seconds(),
             "record": record.to_dict(),
+            "memory_summary": summarize_run_memory(record),
         }
     )
