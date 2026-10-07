@@ -144,3 +144,56 @@ the audited stable release.
 
 This does not claim that it has run successfully in Colab yet. Runtime loading,
 CUDA measurements and the two-job lifecycle still require the laboratory test.
+
+
+### Finding 9 — same-model A -> B does not prove unload
+
+**Status: validation corrected.**
+
+If Workflow B uses the same Klein model as A, B may succeed by reusing retained
+state. That is valuable for the practical use case but does not prove model
+memory was released.
+
+The validation plan now separates A-only release observation from A -> B
+transition/reuse testing.
+
+### Finding 10 — current default cache can intentionally retain loader outputs
+
+**Status: validation corrected.**
+
+ComfyUI v0.39.0 uses RAM-pressure caching by default. The executor cache persists
+across jobs, and RAMPressureCache can retain ModelPatcher-producing loader
+outputs until pressure triggers eviction.
+
+Therefore a default-cache run is not a strict unload test. `--cache-none` is
+now the controlled cache-isolation experiment rather than merely a fallback
+after a supposed unload failure.
+
+### Finding 11 — terminal job state precedes optional worker GC
+
+**Status: validation corrected.**
+
+The prompt worker calls `task_done()` before its later housekeeping block.
+Normal worker GC/soft cache cleanup uses a 10-second interval.
+
+The test now distinguishes POST_A_IMMEDIATE from POST_A_SETTLED instead of
+drawing conclusions from one snapshot immediately after `completed`.
+
+### Finding 12 — peak CUDA metrics are not per-workflow yet
+
+**Status: documented limitation.**
+
+The current instrumentation exposes PyTorch peak values since the last reset,
+but WorkflowDirector does not yet reset those counters per Workflow. They must
+not be used for per-Workflow pass/fail decisions until a reset protocol is
+implemented.
+
+### Reasoning review result
+
+The corrected first memory test now answers three separate questions:
+
+1. Were MODEL/CLIP/VAE genuinely exercised?
+2. What memory/cache state remains after A alone?
+3. Can B run safely after the boundary?
+
+Those questions are no longer conflated.
