@@ -355,3 +355,74 @@ pending/in_progress jobs and refuses to submit unless the queue window is empty.
 Continuous monitoring across a future long memory-observation boundary remains
 to be added in Phase 2. Auto Queue/manual queueing must remain disabled during
 the Phase 1 laboratory.
+
+
+### Finding 27 — /api/prompt was a false alarm, not a compatibility bug
+
+**Status: verified.**
+
+ComfyUI v0.39.0 registers its normal route table twice: once at the original
+paths and once with an /api prefix. Therefore both /prompt and /api/prompt are
+valid for non-static routes. WorkflowDirector keeps /api/prompt.
+
+### Finding 28 — an idle wait does not guarantee normal worker GC
+
+**Status: validation and Phase 2 architecture corrected.**
+
+The prompt worker computes a queue timeout from its 10-second GC interval, but
+the current_time value used by the later GC condition is updated after executing
+a queue item. An idle q.get() timeout returning None does not advance that value
+in the reviewed v0.39.0 path.
+
+Therefore "wait > 10 seconds" cannot be used as evidence that gc.collect() and
+soft_empty_cache() ran. POST_WINDOW_END is now explicitly an observation label,
+not a settling/cleanup claim.
+
+### Finding 29 — PromptModelTracker.end() is not model unloading
+
+**Status: reasoning corrected.**
+
+PromptModelTracker.end() clears the current-prompt in-use marker for tracked
+dynamic ModelPatchers and clears the tracker's mapping. It does not clear
+current_loaded_models and must not be interpreted as a model release operation.
+
+### Finding 30 — Phase 2 needed a run-level baseline, not a fake step boundary
+
+**Status: fixed.**
+
+RunRecord now has run-level observations. DirectorEngine invokes a RunObserver
+before the first Workflow. SnapshotRunObserver performs one discarded warm-up
+snapshot and stores a BASELINE reading.
+
+### Finding 31 — baseline and boundary snapshots could be contaminated by queue races
+
+**Status: reduced and tested.**
+
+The current observer brackets memory snapshots with native active-job checks and
+polls for foreign jobs during the observation window. This detects ordinary
+manual/Auto Queue contamination.
+
+It is not yet a hard queue lease; an unrelated job that starts and finishes
+entirely between polls remains theoretically possible. Colab validation must
+therefore keep Auto Queue disabled and avoid manual submissions during a Master
+run.
+
+### Finding 32 — successful HTTP status with an untrustworthy body is ambiguous
+
+**Status: fixed and covered by CI.**
+
+If /api/prompt returns HTTP 200 but its response body is truncated, invalid, or
+missing prompt_id, the prompt may already be queued. The adapter now routes that
+case through SubmissionTransportError so the preassigned UUID is looked up
+instead of treating the request as safely failed or resubmitting it.
+
+A non-200 response with an unreadable body remains a rejection rather than an
+ambiguous accepted submission.
+
+### Finding 33 — Phase 2 observation must not retain model objects
+
+**Status: accounted for.**
+
+memory_snapshot exposes only the length of current_loaded_models as a diagnostic
+registry count. It does not call loaded_models() and retain temporary strong
+references to ModelPatchers while observing a memory boundary.
