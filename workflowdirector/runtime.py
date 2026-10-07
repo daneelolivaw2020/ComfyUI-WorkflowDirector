@@ -10,6 +10,10 @@ from .core import DirectorEngine, DirectorRunService
 
 _service: DirectorRunService | None = None
 
+# Phase 1 intentionally proves sequencing only. Memory observation/cleanup is
+# connected in Phase 2 after the basic two-job path succeeds.
+BOUNDARY_MODE = "noop-phase1"
+
 
 def get_director_service() -> DirectorRunService:
     global _service
