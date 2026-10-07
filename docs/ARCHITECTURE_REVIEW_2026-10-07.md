@@ -97,16 +97,21 @@ post-request observation/settling before continuing.
 Explicit unload_models remains experimental because it reaches
 unload_all_models(), the path closest to the original failure class.
 
-### 8. Context cannot retain live heavy objects
+### 8. Context survival is explicit; residency is independent
 
-Persistent Context must never keep MODEL, CLIP, VAE or other model objects.
+Persistent Context must never keep MODEL, CLIP, VAE or other model-management
+objects.
 
-IMAGE and LATENT values must also not survive between Workflow jobs as live
-Python/Torch objects in a global dictionary. They cross boundaries as serialized
-assets plus lightweight metadata/references.
+IMAGE and LATENT are different: they are legitimate Context values and may
+survive between Workflow jobs in CPU RAM when that is efficient. They may also
+spill to /content scratch or become durable serialized assets. The logical
+Context key does not change when residency changes.
 
-A Context Put writes only to run-scoped scratch during prompt execution.
-Persistent Context changes only after the job is confirmed successful.
+WorkflowDirector must verify that a hot Context tensor is not unintentionally
+resident in T4 VRAM.
+
+A Context Put stages a StepPatch during prompt execution. Persistent Context
+changes only after the job is confirmed successful.
 
 ### 9. Context writes are transactional and deterministic
 
@@ -116,21 +121,21 @@ For the MVP, two Context Put operations in the same Workflow may not write the
 same key. Duplicate writes are rejected because Comfy graph execution does not
 provide a meaningful visual "last writer wins" rule.
 
-### 10. Colab storage roles remain strict
+### 10. Colab storage roles are distinct without changing Comfy model paths
 
 Google Drive:
-- persistent run state, Context assets and Checkpoints
-- source storage for reusable model files when needed
+- persistent run state, durable Context assets and Checkpoints when configured;
+- may also be part of the user's existing model-storage setup.
 
-/content:
-- runtime scratch
-- temporary Context assets
-- model files used by the active GGUF test
+ /content:
+- fast runtime scratch;
+- temporary spilled Context assets;
+- the normal Comfy installation/model tree when Comfy is installed there.
 
-GGUF files should be copied to local /content before the memory experiment
-rather than mmaped directly from mounted Drive. Current ComfyUI-GGUF creates
-mmap-backed tensors; Drive/FUSE would add an unwanted variable to the memory
-experiment.
+WorkflowDirector does not introduce its own model directory and does not require
+moving GGUF files for the first baseline. Keep the user's normal Comfy model
+lookup unchanged. A local-copy-vs-mounted-Drive comparison is a later controlled
+diagnostic only if storage/mmap behaviour becomes relevant.
 
 ## Review B — adversarial failure analysis
 
