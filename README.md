@@ -80,6 +80,7 @@ See:
 - [Comfy adapter contract](docs/COMFY_ADAPTER.md)
 - [Validation plan](docs/VALIDATION_PLAN.md)
 - [Phase 0 lab](docs/PHASE0_LAB.md)
+- [Phase 1 run API](docs/PHASE1_RUN_API.md)
 - [Code review protocol](docs/CODE_REVIEW_PROTOCOL.md)
 - [Memory barrier strategy](docs/MEMORY_BARRIER_STRATEGY.md)
 - [Context residency](docs/CONTEXT_RESIDENCY.md)
