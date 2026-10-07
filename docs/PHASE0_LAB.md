@@ -1,21 +1,34 @@
 # Phase 0 Lab — Installation and Instrumentation
 
-This lab is intentionally smaller than the final product.
-
 ## Question being tested
 
-Can a clean ComfyUI installation load ComfyUI-WorkflowDirector and expose reliable process/GPU memory measurements without adding model-management behavior of its own?
+Can a clean installation of the current stable ComfyUI load
+ComfyUI-WorkflowDirector and expose trustworthy memory instrumentation without
+changing model-management behaviour?
+
+## Version rule
+
+Use the latest official stable ComfyUI release tag when the lab begins and
+record the exact version.
+
+Current audited target on 2026-10-07:
+
+    ComfyUI v0.39.0
+
+Do not use the moving master branch as the laboratory baseline.
 
 ## Minimal environment
 
-For the first run install only:
+Install only:
 
-1. ComfyUI v0.37.0;
+1. current stable ComfyUI;
 2. ComfyUI-WorkflowDirector.
 
-Do **not** install GGUF, unload/cleanup nodes, RAM cache extensions, rgthree, Crystools, or the production custom-node bundle yet.
+Do not yet install GGUF, unload/cleanup extensions, rgthree, Crystools, KJNodes
+or the production custom-node bundle.
 
-Those are added only when the corresponding validation phase requires them.
+Do not copy the old notebook's memory flags into this clean baseline. Start with
+ComfyUI defaults.
 
 ## Installation
 
@@ -24,39 +37,37 @@ Once this repository is public:
     cd /content/ComfyUI/custom_nodes
     git clone https://github.com/daneelolivaw2020/ComfyUI-WorkflowDirector.git
 
-Restart ComfyUI after cloning.
-
-During active development it is acceptable to pull main. Once a known-good version exists, the Colab notebook should check out a pinned tag instead.
+During development the repository itself may track main. ComfyUI, however,
+should be checked out at an official stable release tag for a reproducible test
+cycle.
 
 ## Smoke test
 
 After ComfyUI starts:
 
 1. Confirm the console does not report an import error for WorkflowDirector.
-2. Open these routes relative to the running ComfyUI URL:
-   - /workflowdirector/health
-   - /workflowdirector/memory
-   - /workflowdirector/status
-3. Call /workflowdirector/memory once as a CUDA warm-up measurement.
-4. Use a second reading as the baseline. The first CUDA query may initialize a CUDA context and slightly change memory usage.
-5. In ComfyUI add **WorkflowDirector · Test Marker**.
-6. Queue it twice without changing its inputs.
+2. Open /workflowdirector/health relative to the running ComfyUI URL.
+3. Verify that the response reports both the WorkflowDirector version and the
+   actual ComfyUI runtime version.
+4. Call /workflowdirector/memory once as a CUDA warm-up measurement.
+5. Use a second reading as the baseline.
+6. Add **WorkflowDirector · Test Marker** in ComfyUI.
+7. Queue it twice without changing its inputs.
 
-Expected behavior:
+Expected behaviour:
 
-- the marker executes both times rather than being served from cache;
+- the V3 custom node loads normally;
+- the marker executes both times instead of being reused from cache;
 - both runs print fresh RAM/VRAM metrics;
-- /workflowdirector/status reports worker_idle=true when no prompt is executing;
-- queue_empty is true only when there is neither a running nor a pending prompt.
+- memory measurements do not unload, move or mutate models.
 
-Expected console output resembles:
-
-    [WorkflowDirector] WorkflowDirector test marker | RAM RSS=... GiB | system available=... / ... GiB | VRAM torch allocated=... GiB | reserved=... GiB | device used=... GiB | free=... / ... GiB
-
-The exact values are machine-dependent.
+The first CUDA query is not used as the baseline because initializing/querying
+the CUDA context can itself alter memory usage.
 
 ## Important limitation
 
-Phase 0 performs **no memory release**. It is read-only instrumentation.
+Phase 0 performs **no memory release** and no orchestration.
 
-That is deliberate. The Memory Barrier will be introduced only after we can record trustworthy before/peak/after measurements and execute two separate prompts in a controlled minimal environment.
+That is deliberate. Phase 1 adds two-job sequencing. Phase 2 then observes what
+the current ComfyUI release naturally does to memory before WorkflowDirector
+adds any cleanup mechanism.
