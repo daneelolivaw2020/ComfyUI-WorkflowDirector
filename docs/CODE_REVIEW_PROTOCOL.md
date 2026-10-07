@@ -29,6 +29,7 @@ Questions include:
 - Could a partial failure mutate persistent state?
 - Could cleanup run concurrently with an active prompt?
 - Could an identical prompt be served from cache and invalidate the experiment?
+- Is the worker idle while another prompt is already pending?
 - What happens if ComfyUI, the backend process, or the Colab kernel dies?
 
 ## Phase 0 review findings
@@ -52,7 +53,7 @@ system RAM headroom that matters on Colab. It now uses ComfyUI's
 comfy.system_memory.virtual_memory_total() and virtual_memory_available(), plus
 process RSS.
 
-CUDA metrics now explicitly distinguish PyTorch allocated/reserved memory from
+CUDA metrics explicitly distinguish PyTorch allocated/reserved memory from
 device-global used/free memory.
 
 ### Finding 3 — execution_success is too early for the Memory Barrier
@@ -69,10 +70,28 @@ Therefore WorkflowDirector must not begin memory cleanup merely because it saw
 execution_success. The first Memory Barrier prototype must verify that the
 prompt is no longer running.
 
+### Finding 4 — "No running prompt" is not the same as "queue empty"
+
+**Status: fixed in diagnostics.**
+
+The diagnostic status route now reports worker_idle and queue_empty separately.
+The future Memory Barrier should require that its target prompt is no longer
+running and, in the one-at-a-time Master design, that no successor prompt has
+already been queued.
+
+### Finding 5 — the first CUDA measurement can perturb the baseline
+
+**Status: accounted for in the lab procedure.**
+
+The lab now performs one warm-up memory query before recording the baseline.
+This prevents CUDA-context initialization from being mistaken for model memory.
+
 ### Compatibility checks passed
 
 For ComfyUI v0.37.0:
 
 - legacy NODE_CLASS_MAPPINGS custom-node registration is still supported;
 - PromptServer.instance.routes is a supported custom-route pattern;
+- PromptQueue.get_current_queue_volatile() exists;
+- prompt queue items store prompt_id at index 1 in the /prompt path;
 - psutil is present in ComfyUI's pinned requirements.
