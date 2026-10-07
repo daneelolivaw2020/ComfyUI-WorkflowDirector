@@ -5,12 +5,18 @@ from __future__ import annotations
 import json
 import unittest
 
+import aiohttp
+
 from workflowdirector.comfy_http import (
     ComfyHttpAdapter,
     ComfyProtocolError,
     PromptRejectedError,
 )
-from workflowdirector.core import JobState
+from workflowdirector.core import (
+    AdapterTransportError,
+    JobState,
+    SubmissionTransportError,
+)
 
 
 class FakeResponse:
@@ -126,6 +132,25 @@ class ComfyHttpAdapterTests(unittest.IsolatedAsyncioTestCase):
                 client_id=None,
             )
 
+    async def test_response_body_transport_loss_keeps_submission_ambiguous(self):
+        session = FakeSession()
+        session.post_response = FakeResponse(
+            200,
+            aiohttp.ClientPayloadError("simulated truncated response"),
+        )
+        adapter = ComfyHttpAdapter(
+            base_url="http://127.0.0.1:8188",
+            session=session,
+        )
+
+        with self.assertRaises(SubmissionTransportError):
+            await adapter.submit_prompt(
+                prompt={},
+                workflow={},
+                prompt_id="11111111-1111-1111-1111-111111111111",
+                client_id=None,
+            )
+
     async def test_job_404_maps_to_unknown(self):
         session = FakeSession()
         session.get_response = FakeResponse(404, {"error": "Job not found"})
@@ -160,6 +185,22 @@ class ComfyHttpAdapterTests(unittest.IsolatedAsyncioTestCase):
                     "11111111-1111-1111-1111-111111111111"
                 ),
                 expected,
+            )
+
+    async def test_job_response_body_transport_loss_is_retryable_transport_error(self):
+        session = FakeSession()
+        session.get_response = FakeResponse(
+            200,
+            aiohttp.ClientPayloadError("simulated truncated response"),
+        )
+        adapter = ComfyHttpAdapter(
+            base_url="http://127.0.0.1:8188",
+            session=session,
+        )
+
+        with self.assertRaises(AdapterTransportError):
+            await adapter.get_job_state(
+                "11111111-1111-1111-1111-111111111111"
             )
 
     async def test_unknown_native_status_is_protocol_error(self):
