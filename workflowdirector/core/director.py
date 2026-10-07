@@ -82,6 +82,8 @@ class DirectorEngine:
                 step_id=step.step_id,
                 job_id=job_id,
                 prompt=step.prompt,
+                workflow=step.workflow,
+                client_id=plan.client_id,
             )
             if not acknowledged:
                 return record
@@ -143,11 +145,15 @@ class DirectorEngine:
         step_id: str,
         job_id: str,
         prompt,
+        workflow,
+        client_id: str | None,
     ) -> bool:
         try:
             acknowledged_id = await self._adapter.submit_prompt(
                 prompt=prompt,
+                workflow=workflow,
                 prompt_id=job_id,
+                client_id=client_id,
             )
         except SubmissionTransportError as exc:
             # The request may have reached ComfyUI.  Never blindly resubmit.
