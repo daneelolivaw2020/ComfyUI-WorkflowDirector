@@ -296,6 +296,27 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.failure_code, "QUEUE_NOT_EXCLUSIVE")
         self.assertEqual(adapter.submissions, [])
 
+    async def test_foreign_job_during_execution_stops_run(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        adapter = FakeAdapter(
+            {
+                a: [JobState.PENDING, JobState.IN_PROGRESS],
+            },
+            active_job_sequences=[
+                set(),
+                set(),
+                {a},
+                {a, "foreign-job"},
+            ],
+        )
+
+        record = await make_engine(adapter).run(plan)
+
+        self.assertEqual(record.phase, RunPhase.FAILED)
+        self.assertEqual(record.failure_code, "QUEUE_INTERFERENCE")
+        self.assertEqual(adapter.submissions, [a])
+
     async def test_foreign_job_between_steps_blocks_second_submission(self):
         plan = make_plan()
         a = make_job_id(plan.run_id, "A", 1)
