@@ -151,6 +151,65 @@ class ComfyHttpAdapterTests(unittest.IsolatedAsyncioTestCase):
                 client_id=None,
             )
 
+    async def test_http_200_without_prompt_id_is_ambiguous_submission(self):
+        session = FakeSession()
+        session.post_response = FakeResponse(
+            200,
+            {"number": 1},
+        )
+        adapter = ComfyHttpAdapter(
+            base_url="http://127.0.0.1:8188",
+            session=session,
+        )
+
+        with self.assertRaises(SubmissionTransportError):
+            await adapter.submit_prompt(
+                prompt={},
+                workflow={},
+                prompt_id="11111111-1111-1111-1111-111111111111",
+                client_id=None,
+            )
+
+    async def test_http_200_invalid_json_is_ambiguous_submission(self):
+        session = FakeSession()
+        session.post_response = FakeResponse(
+            200,
+            ValueError("simulated invalid json"),
+            text="<truncated>",
+        )
+        adapter = ComfyHttpAdapter(
+            base_url="http://127.0.0.1:8188",
+            session=session,
+        )
+
+        with self.assertRaises(SubmissionTransportError):
+            await adapter.submit_prompt(
+                prompt={},
+                workflow={},
+                prompt_id="11111111-1111-1111-1111-111111111111",
+                client_id=None,
+            )
+
+    async def test_http_400_invalid_json_is_still_a_rejection(self):
+        session = FakeSession()
+        session.post_response = FakeResponse(
+            400,
+            ValueError("simulated invalid json"),
+            text="<bad request body unavailable>",
+        )
+        adapter = ComfyHttpAdapter(
+            base_url="http://127.0.0.1:8188",
+            session=session,
+        )
+
+        with self.assertRaises(PromptRejectedError):
+            await adapter.submit_prompt(
+                prompt={},
+                workflow={},
+                prompt_id="11111111-1111-1111-1111-111111111111",
+                client_id=None,
+            )
+
     async def test_job_404_maps_to_unknown(self):
         session = FakeSession()
         session.get_response = FakeResponse(404, {"error": "Job not found"})
