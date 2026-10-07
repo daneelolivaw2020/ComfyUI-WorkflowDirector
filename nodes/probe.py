@@ -29,13 +29,17 @@ class WorkflowDirectorTestMarker:
     OUTPUT_NODE = True
     CATEGORY = "Workflow Director/Lab"
 
+    @classmethod
+    def IS_CHANGED(cls, label):
+        """Force execution on every queue run so measurements are never cached."""
+
+        return float("nan")
+
     def mark(self, label):
         snapshot = memory_snapshot()
         line = compact_memory_line(snapshot)
         logging.info("[WorkflowDirector] %s | %s", label, line)
 
-        # A UI payload makes the node visibly confirm that it executed while the
-        # console log gives us the exact instrumentation we need for the lab.
         return {
             "ui": {
                 "text": [
