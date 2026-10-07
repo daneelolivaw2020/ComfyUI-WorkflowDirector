@@ -279,3 +279,29 @@ surfaced by the available GitHub connection, so CI success is **not** claimed.
 
 The next integration slice must still implement the real Comfy adapter and
 memory boundary observer before Colab runtime validation.
+
+
+### Finding 19 — native /free was incorrectly assumed to separate cache reset from model unload
+
+**Status: architecture corrected before implementation.**
+
+Source review of ComfyUI v0.39.0 shows that /free sets free_memory=true, then the
+prompt worker evaluates model unload with:
+
+    flags.get("unload_models", free_memory)
+
+Because the HTTP route only stores true flags, sending unload_models=false does
+not prevent the fallback. free_memory=true therefore reaches
+unload_all_models().
+
+The planned "safe native free-memory barrier" was removed. The safe progression
+is now defaults observation -> --cache-none observation -> reference diagnosis
+-> narrowly targeted cleanup only if necessary.
+
+### Finding 20 — POST_SETTLED overstated what a timed observation proves
+
+**Status: terminology corrected.**
+
+The non-destructive observer now records POST_IMMEDIATE and POST_WINDOW_END.
+A configured idle window can span normal housekeeping, but a timer alone does
+not prove that memory has reached a stable fixed point.
