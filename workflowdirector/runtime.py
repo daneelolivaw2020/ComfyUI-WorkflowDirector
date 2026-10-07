@@ -13,6 +13,7 @@ from .memory import memory_snapshot
 
 
 _service: DirectorRunService | None = None
+_observation_window_used: float | None = None
 
 BOUNDARY_MODE = "observe-phase2-nondestructive"
 _DEFAULT_OBSERVATION_WINDOW_SECONDS = 1.0
@@ -37,8 +38,14 @@ def observation_window_seconds() -> float:
     return value
 
 
+def effective_observation_window_seconds() -> float:
+    if _observation_window_used is not None:
+        return _observation_window_used
+    return observation_window_seconds()
+
+
 def get_director_service() -> DirectorRunService:
-    global _service
+    global _service, _observation_window_used
 
     if _service is not None:
         return _service
@@ -64,9 +71,10 @@ def get_director_service() -> DirectorRunService:
         snapshot=memory_snapshot,
         warm_up=True,
     )
+    window_seconds = observation_window_seconds()
     boundary_observer = ObservationBoundary(
         snapshot=memory_snapshot,
-        observation_window_seconds=observation_window_seconds(),
+        observation_window_seconds=window_seconds,
         sample_interval_seconds=0.25,
         active_jobs=adapter.get_active_job_ids,
     )
@@ -76,4 +84,5 @@ def get_director_service() -> DirectorRunService:
         boundary_observer=boundary_observer,
     )
     _service = DirectorRunService(engine)
+    _observation_window_used = window_seconds
     return _service
