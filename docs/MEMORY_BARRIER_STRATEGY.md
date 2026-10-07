@@ -12,7 +12,7 @@ The original failure happened in an older environment while trying to
 unload/switch a large GGUF model inside one prompt. That history motivates the
 project but must not dictate the current implementation.
 
-Current audited release: ComfyUI v0.39.0 on 2026-10-07.
+See COMPATIBILITY.md for the currently audited stable release.
 
 ## Boundary definition
 
