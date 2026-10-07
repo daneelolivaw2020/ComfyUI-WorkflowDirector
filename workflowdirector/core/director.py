@@ -16,6 +16,8 @@ from .adapters import (
     BoundaryObserver,
     ComfyAdapter,
     NoopBoundaryObserver,
+    NoopRunObserver,
+    RunObserver,
     SubmissionTransportError,
 )
 from .types import (
@@ -38,6 +40,7 @@ class DirectorEngine:
         adapter: ComfyAdapter,
         *,
         boundary_observer: BoundaryObserver | None = None,
+        run_observer: RunObserver | None = None,
         poll_interval_seconds: float = 0.25,
         job_timeout_seconds: float = 3600.0,
         submission_recovery_timeout_seconds: float = 5.0,
@@ -53,6 +56,7 @@ class DirectorEngine:
 
         self._adapter = adapter
         self._boundary = boundary_observer or NoopBoundaryObserver()
+        self._run_observer = run_observer or NoopRunObserver()
         self._poll_interval = poll_interval_seconds
         self._job_timeout = job_timeout_seconds
         self._submission_recovery_timeout = submission_recovery_timeout_seconds
@@ -82,6 +86,24 @@ class DirectorEngine:
 
         record.phase = RunPhase.RUNNING
         record.event("run_started")
+
+        if not await self._ensure_queue_exclusive(
+            record=record,
+            step_id=None,
+        ):
+            return record
+
+        try:
+            observations = await self._run_observer.before_run(plan=plan)
+            record.observations.extend(observations)
+        except Exception as exc:
+            record.fail(
+                "RUN_OBSERVER_FAILED",
+                f"{type(exc).__name__}: {exc}",
+            )
+            return record
+
+        record.event("run_observer_completed")
 
         for index, step in enumerate(plan.steps):
             record.current_step_index = index
@@ -173,7 +195,7 @@ class DirectorEngine:
         self,
         *,
         record: RunRecord,
-        step_id: str,
+        step_id: str | None,
     ) -> bool:
         """Refuse to submit while any unrelated Comfy job is active."""
 
@@ -193,10 +215,11 @@ class DirectorEngine:
             return False
 
         if active_ids:
+            scope = f"step {step_id}" if step_id is not None else "run baseline"
             record.fail(
                 "QUEUE_NOT_EXCLUSIVE",
                 (
-                    f"Cannot submit step {step_id}; Comfy has active job(s): "
+                    f"Cannot continue {scope}; Comfy has active job(s): "
                     + ", ".join(sorted(active_ids))
                 ),
             )
