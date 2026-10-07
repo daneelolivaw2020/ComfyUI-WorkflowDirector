@@ -147,6 +147,8 @@ class ComfyHttpAdapter:
     async def _read_json(response: aiohttp.ClientResponse) -> dict[str, Any]:
         try:
             payload = await response.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            raise
         except Exception as exc:
             text = await response.text()
             raise ComfyProtocolError(
