@@ -99,17 +99,14 @@ class ObservationBoundary:
         step: PreparedStep,
         job_id: str,
     ) -> tuple[MemoryObservation, ...]:
-        await self._assert_quiet(step=step)
-
-        start = self._clock()
         observations = [
-            MemoryObservation.capture(
-                "POST_IMMEDIATE",
-                self._snapshot(),
+            await self._capture_quiet(
+                label="POST_IMMEDIATE",
+                step=step,
             )
         ]
 
-        deadline = start + self._window
+        deadline = self._clock() + self._window
         while self._clock() < deadline:
             await self._sleep(
                 min(
@@ -120,12 +117,23 @@ class ObservationBoundary:
             await self._assert_quiet(step=step)
 
         observations.append(
-            MemoryObservation.capture(
-                "POST_WINDOW_END",
-                self._snapshot(),
+            await self._capture_quiet(
+                label="POST_WINDOW_END",
+                step=step,
             )
         )
         return tuple(observations)
+
+    async def _capture_quiet(
+        self,
+        *,
+        label: str,
+        step: PreparedStep,
+    ) -> MemoryObservation:
+        await self._assert_quiet(step=step)
+        snapshot = self._snapshot()
+        await self._assert_quiet(step=step)
+        return MemoryObservation.capture(label, snapshot)
 
     async def _assert_quiet(self, *, step: PreparedStep) -> None:
         if self._active_jobs is None:
