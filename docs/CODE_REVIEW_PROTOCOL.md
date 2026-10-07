@@ -197,3 +197,85 @@ The corrected first memory test now answers three separate questions:
 3. Can B run safely after the boundary?
 
 Those questions are no longer conflated.
+
+
+## Core Director slice review — 2026-10-07
+
+This review covers the first backend-agnostic Director implementation:
+RunPlan/PreparedStep, deterministic job ids, sequential job state machine,
+boundary observer contract, reconnect handling and simulated unit tests.
+
+### Finding 13 — frozen dataclass did not make the prompt snapshot immutable
+
+**Status: fixed.**
+
+PreparedStep originally held a caller-owned dict. A frozen dataclass prevents
+attribute reassignment but does not freeze nested dictionaries.
+
+PreparedStep now canonicalizes the prepared API prompt to JSON at construction
+time and returns a fresh decoded object when the prompt is requested. Mutating
+the original workflow/prompt object or a previously-read prompt cannot alter the
+prepared RunPlan.
+
+### Finding 14 — lost submission acknowledgement was checked only once
+
+**Status: fixed.**
+
+A request can reach ComfyUI while the response is lost, and the native job may
+not be immediately visible through status lookup.
+
+The Director now uses a bounded visibility-recovery poll against the
+pre-generated prompt UUID. UNKNOWN does not trigger resubmission. If the job
+remains unobservable, the run stops as SUBMISSION_UNCERTAIN.
+
+### Finding 15 — patch accidentally referenced a missing recovery method
+
+**Status: fixed during second review.**
+
+The first edit introduced a call to _wait_for_submission_visibility but an edit
+guard prevented the method itself from being inserted. The second review caught
+this before runtime validation.
+
+### Finding 16 — transient status disconnects were treated as fatal
+
+**Status: fixed.**
+
+The adapter contract now distinguishes transient transport failures from logical
+or programming failures. Temporary connectivity failures consume polling budget
+and are recorded as events; they do not cause duplicate submission.
+
+### Finding 17 — boundary result processing could escape the state machine
+
+**Status: fixed.**
+
+Extending the observation list now occurs inside the boundary exception guard.
+A malformed/failing boundary cannot accidentally throw past DirectorEngine and
+allow higher-level code to misinterpret the run state.
+
+### Finding 18 — recovery record must be serializable
+
+**Status: covered by a unit test.**
+
+The simulated test suite now checks that RunRecord.to_dict() can be passed to
+json.dumps after a successful two-step run with memory observations.
+
+### Current static result
+
+The core guarantees, by construction:
+
+- one prepared Workflow is submitted at a time;
+- Workflow B is not submitted until A reached terminal COMPLETED and the
+  boundary observer returned successfully;
+- FAILED/CANCELLED stops the run;
+- a lost submission acknowledgement is resolved by the preassigned UUID and is
+  never blindly retried;
+- transient status transport failures do not create duplicate submissions;
+- boundary failure prevents the next Workflow;
+- prepared prompt snapshots cannot be changed by later caller mutations.
+
+A GitHub Actions workflow has been added to run the backend-agnostic unit tests
+on Python 3.11 and 3.13. At the time of this review no workflow run was yet
+surfaced by the available GitHub connection, so CI success is **not** claimed.
+
+The next integration slice must still implement the real Comfy adapter and
+memory boundary observer before Colab runtime validation.
