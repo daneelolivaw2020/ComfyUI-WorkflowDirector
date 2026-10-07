@@ -64,14 +64,17 @@ Success criteria:
 
 No heavy models are needed yet.
 
-## Phase 2 — Memory boundary
+## Phase 2 — Real model use and memory behaviour
 
-### First real model test
+Phase 2 answers several distinct questions. They must not be collapsed into one
+"did memory unload?" result.
 
-The first meaningful memory test must produce a real image. Loader nodes alone
-are not sufficient because model movement/loading may be deferred until use.
+### 2A — Prove the models were really used
 
-Workflow A must genuinely exercise:
+Loader nodes alone are not sufficient because model movement/loading may be
+deferred until use.
+
+Workflow A must produce a real image and genuinely exercise:
 
 - GGUF diffusion-model loader;
 - GGUF text-encoder loader;
@@ -84,81 +87,136 @@ Workflow A must genuinely exercise:
 For the target case, use Klein Q6, the intended Qwen text encoder, and the same
 known-working VAE/model-specific sampling path as the production workflow.
 
-Workflow A contains **no unload node**. It finishes normally.
+Workflow A contains **no unload node**.
 
-Sequence:
+### 2B — Execution boundary vs memory boundary
+
+The native Jobs API reporting `completed` proves the Workflow execution has
+ended. It does **not** by itself prove that all model memory has been released.
+
+Current ComfyUI may still:
+
+- retain node outputs in its executor cache;
+- retain reusable model state by design;
+- run worker housekeeping/GC after the job has already entered history.
+
+Therefore use this sequence:
 
     CUDA warm-up
         |
-    BASELINE memory snapshot
+    BASELINE
         |
     Workflow A: real image
         |
-    native Jobs API = completed
+    Jobs API = completed
         |
-    POST_A memory snapshot outside the workflow
+    POST_A_IMMEDIATE
         |
-    Workflow B: second independent real image
+    remain idle; do not queue B
         |
-    native Jobs API = completed
+    POST_A_SETTLED
         |
-    POST_B memory snapshot
+    only then continue
 
-Do not pre-queue Workflow B. Do not perform custom cleanup in the first
-experiment.
+POST_A_IMMEDIATE records the state as soon as the job is terminal.
+POST_A_SETTLED records the state after the worker has had time to perform its
+normal post-job housekeeping. Because current ComfyUI's worker GC interval is
+10 seconds, the laboratory should include an idle observation after that
+interval rather than drawing conclusions from one immediate snapshot.
 
-For the first lifecycle test, omit LoRAs unless required. Once this passes,
-repeat with LoRA stack A in Workflow A and LoRA stack B in Workflow B.
+### 2C — Current-default cache observation
 
-Interpret memory using process RSS, cgroup-aware RAM headroom, PyTorch allocated
-and reserved VRAM, and device-global used/free VRAM. Reserved VRAM alone is not
-proof that a model remains live.
+Current ComfyUI's default RAM-pressure cache can intentionally retain outputs
+from previous jobs, including ModelPatcher-producing loader nodes, until memory
+pressure causes eviction.
 
-The functional pass condition is that Workflow B can execute safely after A on
-Colab Free T4 without host-RAM spike, OOM, or kernel restart. If retained memory
-makes B fail, then proceed to controlled cleanup experiments.
+Therefore the default-cache run answers:
 
+> Can current ComfyUI transition safely to the next Workflow under its normal
+> caching/memory policy?
 
-Goal: determine what current ComfyUI already releases naturally between two
-independent top-level jobs.
+It does **not** by itself answer:
 
-Measure:
+> Was the first model fully released?
+
+Retained memory under the default cache is not automatically a WorkflowDirector
+bug.
+
+### 2D — Isolation/release experiment
+
+If we specifically want to test whether a true workflow boundary can release
+model references, repeat the same A-only experiment with one controlled change:
+
+    --cache-none
+
+Then compare BASELINE, POST_A_IMMEDIATE and POST_A_SETTLED.
+
+This removes the normal executor output cache as a confounder. It still does not
+guarantee that GGUF/model-management references disappear; that is what the
+experiment measures.
+
+Do not add unload nodes or explicit destructive cleanup at this stage.
+
+### 2E — Practical A -> B transition proof
+
+After the A-only observations are recorded, run Workflow B as a new top-level
+job.
+
+For the first practical Klein test, B may use the same Klein Q6/Qwen/VAE path
+with a different prompt. This proves sequencing/reuse safety, **not unload**.
+
+Then repeat with:
+
+- LoRA stack A in Workflow A;
+- LoRA stack B in Workflow B.
+
+This is the real target scenario.
+
+A stronger future generalization test may use a genuinely different heavy model
+in B. That is useful for proving model-switching capability but is not required
+before the original Klein use case works.
+
+### Metrics
+
+Record:
 
 - process RSS;
 - cgroup-aware runtime RAM available/total;
 - PyTorch allocated/reserved VRAM;
-- device-global CUDA used/free VRAM;
-- values after Workflow 1 reaches terminal state;
-- values immediately before Workflow 2;
-- values during/after Workflow 2.
+- device-global CUDA used/free VRAM.
 
-First test current defaults with **no custom cleanup**.
+Do not use the current `peak_*_since_reset` fields for per-Workflow conclusions
+until WorkflowDirector implements an explicit peak-reset protocol.
 
-If memory remains a problem, vary one thing at a time. A useful first diagnostic
-is `--cache-none`. DynamicVRAM, async offload and pinned-memory behaviour should
-only be disabled in separate controlled experiments.
+Reserved VRAM alone is not proof that a model remains live.
 
-Success is functional: enough real RAM/VRAM is available for the next workflow
-to load and complete without restarting the notebook/kernel. Near-baseline
-memory is desirable but not required if retained memory is safely reusable.
+### Phase 2 success
 
-## Phase 3 — Real heavy-model case
+There are two different success statements:
+
+**Release observation:** memory after A is understood and measured without
+confounding it with W1-internal unload logic.
+
+**Functional transition:** Workflow B can execute safely after A on Colab Free
+T4 without host-RAM spike, OOM, or kernel restart.
+
+## Phase 3 — Real heavy-model regression
 
 Only after Phase 2 succeeds, add the minimum current dependencies required for
 the real model case, including a ComfyUI-GGUF version compatible with the current
 stable ComfyUI.
 
-Test conceptually:
+Test:
 
     Workflow 1
       Qwen + Klein Q6 + prompt/LoRA stack A
            |
-    real job boundary
+    execution boundary
+           |
+    memory observation / barrier
            |
     Workflow 2
       Qwen + Klein Q6 + prompt/LoRA stack B
-
-Do not assume the failure mechanism is identical to the older environment where the problem was first observed.
 
 Target on the mandatory Colab Free T4 environment:
 
