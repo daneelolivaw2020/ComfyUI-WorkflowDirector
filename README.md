@@ -75,6 +75,7 @@ dependencies needed for the real heavy-model case.
 
 See:
 - [Architecture](docs/ARCHITECTURE.md)
+- [Architecture review — 2026-10-07](docs/ARCHITECTURE_REVIEW_2026-10-07.md)
 - [Compatibility policy](docs/COMPATIBILITY.md)
 - [Validation plan](docs/VALIDATION_PLAN.md)
 - [Phase 0 lab](docs/PHASE0_LAB.md)
