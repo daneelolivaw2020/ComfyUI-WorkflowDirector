@@ -56,7 +56,19 @@ Initial cross-workflow data types:
 - IMAGE
 - LATENT
 
+Context describes what survives between Workflows, not necessarily what is
+written to disk. STRING values can remain in RAM. IMAGE and LATENT values may
+remain hot in CPU RAM when that is efficient, spill to local /content scratch
+under pressure, or become durable assets when checkpoint/persistence requires
+it.
+
+Live model-management objects such as MODEL, CLIP and VAE are intentionally not
+persistent Context types because they must remain releasable at a memory
+boundary.
+
 Other types can be added later without changing the core model.
+
+See CONTEXT_RESIDENCY.md for the residency policy.
 
 ## Checkpoint
 
@@ -137,3 +149,13 @@ Do not build yet:
 - sophisticated Context versioning;
 - complex visual Context editor;
 - automatic public ComfyUI Manager publication.
+
+
+## Model storage
+
+WorkflowDirector does not own a separate model directory. Diffusion models, text
+encoders, VAEs and LoRAs continue to use the normal ComfyUI model search paths
+and whatever supported path configuration the user's Comfy installation already
+uses.
+
+See MODEL_FILE_LOCATIONS.md.
