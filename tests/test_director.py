@@ -41,7 +41,7 @@ class FakeAdapter:
         self.last_state = {}
         self.transient_status_errors = dict(transient_status_errors or {})
 
-    async def submit_prompt(self, *, prompt, prompt_id):
+    async def submit_prompt(self, *, prompt, workflow, prompt_id, client_id):
         self.submissions.append(prompt_id)
         if prompt_id in self.lose_ack_for:
             raise SubmissionTransportError("simulated connection loss")
@@ -84,8 +84,20 @@ def make_plan():
     return RunPlan(
         run_id=str(uuid.uuid4()),
         steps=(
-            PreparedStep("A", "workflow-a", "Workflow A", {"1": {"class_type": "A"}}),
-            PreparedStep("B", "workflow-b", "Workflow B", {"1": {"class_type": "B"}}),
+            PreparedStep(
+                "A",
+                "workflow-a",
+                "Workflow A",
+                {"1": {"class_type": "A"}},
+                {"id": "workflow-a", "nodes": []},
+            ),
+            PreparedStep(
+                "B",
+                "workflow-b",
+                "Workflow B",
+                {"1": {"class_type": "B"}},
+                {"id": "workflow-b", "nodes": []},
+            ),
         ),
     )
 
@@ -251,13 +263,22 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_prepared_prompt_is_snapshot_not_caller_owned_dict(self):
         source = {"1": {"class_type": "Original", "inputs": {"value": 1}}}
-        step = PreparedStep("A", "workflow-a", "Workflow A", source)
+        workflow_source = {"id": "workflow-a", "nodes": [{"id": 1}]}
+        step = PreparedStep(
+            "A",
+            "workflow-a",
+            "Workflow A",
+            source,
+            workflow_source,
+        )
 
         source["1"]["class_type"] = "Mutated"
+        workflow_source["nodes"][0]["id"] = 999
         first_read = step.prompt
         first_read["1"]["class_type"] = "Also Mutated"
 
         self.assertEqual(step.prompt["1"]["class_type"], "Original")
+        self.assertEqual(step.workflow["nodes"][0]["id"], 1)
 
     async def test_run_record_is_json_serializable(self):
         plan = make_plan()
