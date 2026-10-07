@@ -1,13 +1,14 @@
 """Workflow-level state machine.
 
 The Director is intentionally not a Comfy node and never runs inside
-PromptExecutor.  It submits exactly one prepared Workflow job at a time, waits
+PromptExecutor. It submits exactly one prepared Workflow job at a time, waits
 for native terminal state, runs the boundary observer, and only then advances.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 
 from .adapters import (
@@ -28,6 +29,7 @@ from .types import (
 
 
 SleepFn = Callable[[float], Awaitable[None]]
+ClockFn = Callable[[], float]
 
 
 class DirectorEngine:
@@ -37,25 +39,38 @@ class DirectorEngine:
         *,
         boundary_observer: BoundaryObserver | None = None,
         poll_interval_seconds: float = 0.25,
-        max_polls_per_job: int = 2400,
-        submission_recovery_polls: int = 20,
+        job_timeout_seconds: float = 3600.0,
+        submission_recovery_timeout_seconds: float = 5.0,
         sleep: SleepFn = asyncio.sleep,
+        clock: ClockFn = time.monotonic,
     ) -> None:
-        if poll_interval_seconds < 0:
-            raise ValueError("poll_interval_seconds must be >= 0")
-        if max_polls_per_job < 1:
-            raise ValueError("max_polls_per_job must be >= 1")
-        if submission_recovery_polls < 1:
-            raise ValueError("submission_recovery_polls must be >= 1")
+        if poll_interval_seconds <= 0:
+            raise ValueError("poll_interval_seconds must be > 0")
+        if job_timeout_seconds <= 0:
+            raise ValueError("job_timeout_seconds must be > 0")
+        if submission_recovery_timeout_seconds <= 0:
+            raise ValueError("submission_recovery_timeout_seconds must be > 0")
 
         self._adapter = adapter
         self._boundary = boundary_observer or NoopBoundaryObserver()
         self._poll_interval = poll_interval_seconds
-        self._max_polls = max_polls_per_job
-        self._submission_recovery_polls = submission_recovery_polls
+        self._job_timeout = job_timeout_seconds
+        self._submission_recovery_timeout = submission_recovery_timeout_seconds
         self._sleep = sleep
+        self._clock = clock
 
-    async def run(self, plan: RunPlan) -> RunRecord:
+    async def run(
+        self,
+        plan: RunPlan,
+        *,
+        client_id: str | None = None,
+    ) -> RunRecord:
+        """Execute one prepared plan.
+
+        client_id is ephemeral frontend routing state. It is intentionally not
+        part of the immutable RunPlan.
+        """
+
         record = RunRecord(run_id=plan.run_id, phase=RunPhase.RUNNING)
         record.event("run_started")
 
@@ -83,7 +98,7 @@ class DirectorEngine:
                 job_id=job_id,
                 prompt=step.prompt,
                 workflow=step.workflow,
-                client_id=plan.client_id,
+                client_id=client_id,
             )
             if not acknowledged:
                 return record
@@ -127,6 +142,7 @@ class DirectorEngine:
                     f"{type(exc).__name__}: {exc}",
                 )
                 return record
+
             record.event(
                 "boundary_completed",
                 step_id=step.step_id,
@@ -156,7 +172,6 @@ class DirectorEngine:
                 client_id=client_id,
             )
         except SubmissionTransportError as exc:
-            # The request may have reached ComfyUI.  Never blindly resubmit.
             record.event(
                 "submission_ack_lost",
                 step_id=step_id,
@@ -206,9 +221,9 @@ class DirectorEngine:
         step_id: str,
         job_id: str,
     ) -> JobState | None:
-        """Resolve an ambiguous submission without ever blindly resubmitting."""
+        deadline = self._clock() + self._submission_recovery_timeout
 
-        for _ in range(self._submission_recovery_polls):
+        while True:
             try:
                 state = await self._adapter.get_job_state(job_id)
             except AdapterTransportError as lookup_exc:
@@ -218,8 +233,6 @@ class DirectorEngine:
                     job_id=job_id,
                     detail=str(lookup_exc),
                 )
-                await self._sleep(self._poll_interval)
-                continue
             except Exception as lookup_exc:
                 record.fail(
                     "SUBMISSION_UNCERTAIN",
@@ -229,20 +242,27 @@ class DirectorEngine:
                     ),
                 )
                 return None
+            else:
+                if state != JobState.UNKNOWN:
+                    return state
 
-            if state != JobState.UNKNOWN:
-                return state
+            if self._clock() >= deadline:
+                record.fail(
+                    "SUBMISSION_UNCERTAIN",
+                    (
+                        "Submission acknowledgement was lost and the prepared "
+                        f"job id {job_id} remained unobservable. "
+                        "Refusing to resubmit."
+                    ),
+                )
+                return None
 
-            await self._sleep(self._poll_interval)
-
-        record.fail(
-            "SUBMISSION_UNCERTAIN",
-            (
-                "Submission acknowledgement was lost and the prepared job id "
-                f"{job_id} remained unobservable. Refusing to resubmit."
-            ),
-        )
-        return None
+            await self._sleep(
+                min(
+                    self._poll_interval,
+                    max(0.0, deadline - self._clock()),
+                )
+            )
 
     async def _wait_for_terminal(
         self,
@@ -250,9 +270,10 @@ class DirectorEngine:
         record: RunRecord,
         attempt: JobAttemptRecord,
     ) -> JobState | None:
+        deadline = self._clock() + self._job_timeout
         last_state: JobState | None = None
 
-        for _ in range(self._max_polls):
+        while True:
             try:
                 state = await self._adapter.get_job_state(attempt.job_id)
             except AdapterTransportError as exc:
@@ -262,40 +283,41 @@ class DirectorEngine:
                     job_id=attempt.job_id,
                     detail=str(exc),
                 )
-                await self._sleep(self._poll_interval)
-                continue
             except Exception as exc:
                 record.fail(
                     "JOB_STATUS_FAILED",
                     f"{type(exc).__name__}: {exc}",
                 )
                 return None
+            else:
+                attempt.state = state
 
-            attempt.state = state
+                if state != last_state:
+                    record.event(
+                        "job_state",
+                        step_id=attempt.step_id,
+                        job_id=attempt.job_id,
+                        detail=state.value,
+                    )
+                    last_state = state
 
-            if state != last_state:
-                record.event(
-                    "job_state",
-                    step_id=attempt.step_id,
-                    job_id=attempt.job_id,
-                    detail=state.value,
+                if state in {
+                    JobState.COMPLETED,
+                    JobState.FAILED,
+                    JobState.CANCELLED,
+                }:
+                    return state
+
+            if self._clock() >= deadline:
+                record.fail(
+                    "JOB_STATUS_TIMEOUT",
+                    f"Job {attempt.job_id} did not reach terminal state in time",
                 )
-                last_state = state
+                return None
 
-            if state in {
-                JobState.COMPLETED,
-                JobState.FAILED,
-                JobState.CANCELLED,
-            }:
-                return state
-
-            # UNKNOWN is tolerated here because a just-accepted job may not yet
-            # be visible through every status surface.  It becomes a timeout,
-            # never an automatic duplicate submission.
-            await self._sleep(self._poll_interval)
-
-        record.fail(
-            "JOB_STATUS_TIMEOUT",
-            f"Job {attempt.job_id} did not reach terminal state in time",
-        )
-        return None
+            await self._sleep(
+                min(
+                    self._poll_interval,
+                    max(0.0, deadline - self._clock()),
+                )
+            )
