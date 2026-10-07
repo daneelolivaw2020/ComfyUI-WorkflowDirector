@@ -95,6 +95,12 @@ class DirectorEngine:
             )
             record.attempts.append(attempt)
 
+            if not await self._ensure_queue_exclusive(
+                record=record,
+                step_id=step.step_id,
+            ):
+                return record
+
             record.event(
                 "submission_started",
                 step_id=step.step_id,
@@ -162,6 +168,45 @@ class DirectorEngine:
         record.phase = RunPhase.COMPLETED
         record.event("run_completed")
         return record
+
+    async def _ensure_queue_exclusive(
+        self,
+        *,
+        record: RunRecord,
+        step_id: str,
+    ) -> bool:
+        """Refuse to submit while any unrelated Comfy job is active."""
+
+        try:
+            active_ids = await self._adapter.get_active_job_ids()
+        except AdapterTransportError as exc:
+            record.fail(
+                "QUEUE_STATE_UNCERTAIN",
+                f"Could not verify active Comfy jobs: {exc}",
+            )
+            return False
+        except Exception as exc:
+            record.fail(
+                "QUEUE_STATE_FAILED",
+                f"{type(exc).__name__}: {exc}",
+            )
+            return False
+
+        if active_ids:
+            record.fail(
+                "QUEUE_NOT_EXCLUSIVE",
+                (
+                    f"Cannot submit step {step_id}; Comfy has active job(s): "
+                    + ", ".join(sorted(active_ids))
+                ),
+            )
+            return False
+
+        record.event(
+            "queue_exclusive",
+            step_id=step_id,
+        )
+        return True
 
     async def _submit_or_recover(
         self,
