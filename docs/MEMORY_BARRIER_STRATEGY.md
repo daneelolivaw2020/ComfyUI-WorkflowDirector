@@ -8,61 +8,102 @@ memory-management code.
 WorkflowDirector must first learn what the **current stable ComfyUI** does
 naturally at a true top-level job boundary.
 
-The original failure happened in an older environment while trying to
-unload/switch a large GGUF model inside one prompt. That history motivates the
-project but must not dictate the current implementation.
-
 See COMPATIBILITY.md for the currently audited stable release.
 
-## Boundary definition
+## Two different boundaries
 
-A Workflow reaches the boundary only when its native ComfyUI job state is
-terminal.
+WorkflowDirector must not confuse execution completion with memory quiescence.
 
-For normal forward execution, WorkflowDirector advances only from:
+### Execution boundary
+
+Reached when the native Jobs API reports:
 
     status = completed
 
-Live execution_success events are not sufficient because current ComfyUI emits
-them before the PromptExecutor finalizer finishes.
+At this point the Workflow has finished and transactional Context may eventually
+be committed.
+
+### Memory boundary
+
+Reached only after WorkflowDirector has evaluated the post-job memory state and,
+if required, completed its memory-barrier policy.
+
+The execution boundary is necessary but not sufficient to claim that model
+memory has been released.
+
+## Why current defaults can retain models
+
+Current ComfyUI uses RAM-pressure caching by default.
+
+Its executor cache persists across jobs and may retain outputs from loader nodes.
+The current RAMPressureCache specifically gives old ModelPatcher outputs high
+eviction priority under RAM pressure, which means such objects can remain cached
+when pressure is low.
+
+Therefore:
+
+- default-cache retention may be intentional;
+- `job = completed` does not imply loader outputs disappeared;
+- using the same model in Workflow B can prove reuse/transition but cannot prove
+  Workflow A unloaded it.
+
+## Post-job housekeeping timing
+
+Current ComfyUI's prompt worker marks a job done before it reaches the later
+housekeeping section that can call Python GC and `soft_empty_cache()`.
+
+The worker uses a 10-second GC interval.
+
+Therefore the laboratory records at least:
+
+    POST_A_IMMEDIATE
+    POST_A_SETTLED
+
+with the second observation taken after sufficient idle time for normal worker
+housekeeping to run.
+
+Workflow B is not queued during this observation window.
 
 ## Barrier 0 — Current defaults, observe only
 
-Run current stable ComfyUI with its normal memory behaviour.
+Run current stable ComfyUI with normal memory behaviour.
 
-After Workflow 1 reaches completed:
+After Workflow A reaches completed:
 
 1. do not unload anything;
-2. measure process RSS;
-3. measure cgroup-aware runtime RAM headroom;
-4. measure PyTorch allocated/reserved VRAM;
-5. measure device-global CUDA used/free VRAM;
-6. then submit Workflow 2.
+2. take POST_A_IMMEDIATE;
+3. remain idle;
+4. take POST_A_SETTLED;
+5. interpret cache retention separately from actual memory pressure;
+6. only then decide whether to submit B.
 
 Question:
 
-> Does a real top-level job boundary already provide enough reusable/free memory
-> for Workflow 2 to complete?
+> Can current ComfyUI transition safely to the next Workflow under its normal
+> memory/cache policy?
 
-If yes, do not add custom cleanup merely to make a metric look lower.
+This is a compatibility observation, not a strict unload test.
 
-## Barrier 1 — Controlled cache experiment
+## Barrier 1 — Cache-isolation experiment
 
-If memory retention prevents Workflow 2 from running, repeat the same experiment
-with one controlled change at a time.
-
-The first useful diagnostic may be:
+Repeat the same Workflow A with:
 
     --cache-none
 
-This tests whether executor caching is retaining objects across jobs.
+This removes executor output caching as a confounding source of strong
+references.
 
-It is a diagnostic setting, not an initial product requirement.
+Question:
+
+> Once the normal executor cache is removed from the experiment, what model/RAM/
+> VRAM state remains after a true job boundary and normal worker housekeeping?
+
+Do not add unload nodes.
 
 ## Barrier 2 — Safe post-job cleanup experiment
 
-If the failure persists, test a dedicated post-job cleanup step only after
-Workflow 1 is terminal.
+Only if the cache-isolation experiment still leaves problematic memory, test a
+dedicated post-job cleanup step.
 
 Candidate operations are limited initially to:
 
@@ -80,22 +121,21 @@ anything.
 
 Questions:
 
-- Is a ModelPatcher still referenced?
+- Is a ModelPatcher still strongly referenced?
 - Is a real model still alive?
-- Is a current Comfy cache intentionally retaining it?
-- Is the retained amount merely PyTorch reserved memory?
+- Is model-management intentionally retaining reusable state?
+- Is retained memory merely PyTorch reserved memory?
 - Is device-global usage actually high?
 - Is host RAM pressure coming from offload/pinning behaviour?
 - Is a GGUF/custom-node object retaining mappings or tensors?
 
-Current Comfy internals such as LoadedModel and current_loaded_models may be used
-for diagnostics, but they are not part of WorkflowDirector's architectural
-contract.
+Comfy internals may be used for laboratory diagnostics, but they are not part of
+WorkflowDirector's architectural contract.
 
 ## Barrier 4 — Experimental targeted release
 
 Only if diagnostics identify a specific stale reference should an explicit
-release experiment be designed.
+release mechanism be designed.
 
 Any such mechanism must:
 
@@ -109,32 +149,25 @@ Any such mechanism must:
 
 The Master submits one top-level Workflow at a time:
 
-    Workflow 1
+    Workflow A
        |
     native job = completed
        |
-    observe / optional barrier
+    post-job observation / barrier
        |
-    Workflow 2
+    Workflow B
 
-The successor is not pre-queued while the barrier is being evaluated.
-
-## Startup flags
-
-Do not inherit the old notebook's memory flags into the new baseline.
-
-Current Comfy defaults are the first test. Any switch such as cache-none,
-disable-dynamic-vram, disable-async-offload or disable-pinned-memory is a
-separate experiment whose effect is measured.
+The successor is not pre-queued while the memory boundary is being evaluated.
 
 ## Success criterion
 
-The primary success criterion is not "all memory counters return to zero."
+The product requirement is not that every memory counter returns to zero.
 
-It is:
+The requirements are:
 
-> Workflow 2 can load and complete reliably after Workflow 1, with measured RAM
-> and VRAM staying inside safe limits and without restarting the Colab kernel.
-
-Lower post-boundary memory is desirable, but functional safe reuse is the
-product requirement.
+1. WorkflowDirector understands whether memory is cached, live or safely
+   reusable at the boundary.
+2. The next intended Workflow can load and complete on Colab Free T4 without
+   unsafe host-RAM pressure, OOM or kernel restart.
+3. If a Workflow genuinely requires release rather than reuse, the barrier can
+   create enough headroom safely.
