@@ -478,3 +478,41 @@ The analyzer deliberately refuses to turn one declining metric into a
 The official latest stable ComfyUI release on 2026-10-07 remains v0.39.0, and
 the reviewed custom-route behaviour still supports both original and /api-
 prefixed non-static routes.
+
+
+### Finding 39 — first visual lab path must not require user-managed API JSON
+
+**Status: implemented.**
+
+The current frontend package exposes app.graphToPrompt(), which returns both the
+visual workflow and executable output representation. WorkflowDirector now has a
+temporary bottom-panel laboratory that captures the current normal Comfy
+workflow as A or B and builds the internal RunPlan without exposing API JSON to
+the user.
+
+### Finding 40 — direct graphToPrompt capture does not reproduce normal beforeQueued callbacks
+
+**Status: explicitly constrained for the laboratory; final adapter still pending.**
+
+Normal app.queuePrompt invokes widget beforeQueued callbacks before compiling.
+The lab capture path calls graphToPrompt directly, so the first runtime test must
+use fixed seeds and avoid nodes whose required behaviour depends on beforeQueued.
+
+This limitation is visible in the lab panel and is not accepted as the final
+WorkflowDirector compiler semantics.
+
+### Finding 41 — laboratory run polling could leave the UI stuck after a browser-side status error
+
+**Status: fixed.**
+
+The lab panel now releases its local running state on polling failure and retains
+the last run id so the user can query that backend-owned run again without
+recapturing A/B.
+
+### Finding 42 — laboratory memory display omitted reserved VRAM and the absolute baseline
+
+**Status: fixed.**
+
+The panel now includes a BASELINE row plus allocated, reserved, device-global
+VRAM, process RSS, system RAM headroom and model-registry count. This prevents
+the first test from over-weighting allocator allocated memory alone.
