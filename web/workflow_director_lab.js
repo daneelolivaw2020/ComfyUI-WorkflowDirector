@@ -67,6 +67,8 @@ function makeObservationTable(memorySummary) {
     "Δ RSS",
     "Torch alloc",
     "Δ alloc",
+    "Torch reserved",
+    "Δ reserved",
     "Device used",
     "Δ used",
     "Sys avail",
@@ -85,6 +87,34 @@ function makeObservationTable(memorySummary) {
   }
   table.appendChild(head);
 
+  const baselineMetrics = memorySummary?.baseline?.metrics;
+  if (baselineMetrics) {
+    const baselineValues = [
+      "—",
+      "BASELINE",
+      metricValue(baselineMetrics, "process_rss_gib"),
+      deltaValue(baselineMetrics, "process_rss_gib"),
+      metricValue(baselineMetrics, "cuda_allocated_gib"),
+      deltaValue(baselineMetrics, "cuda_allocated_gib"),
+      metricValue(baselineMetrics, "cuda_reserved_gib"),
+      deltaValue(baselineMetrics, "cuda_reserved_gib"),
+      metricValue(baselineMetrics, "cuda_device_used_gib"),
+      deltaValue(baselineMetrics, "cuda_device_used_gib"),
+      metricValue(baselineMetrics, "system_available_gib"),
+      deltaValue(baselineMetrics, "system_available_gib"),
+      metricValue(baselineMetrics, "loaded_model_entries"),
+    ];
+    const baselineRow = document.createElement("tr");
+    for (const value of baselineValues) {
+      const td = document.createElement("td");
+      td.textContent = value;
+      td.style.padding = "3px 6px";
+      td.style.borderBottom = "1px solid var(--border-color, #333)";
+      baselineRow.appendChild(td);
+    }
+    table.appendChild(baselineRow);
+  }
+
   for (const step of memorySummary?.steps ?? []) {
     for (const observation of step.observations ?? []) {
       const metrics = observation.metrics ?? {};
@@ -95,6 +125,8 @@ function makeObservationTable(memorySummary) {
         deltaValue(metrics, "process_rss_gib"),
         metricValue(metrics, "cuda_allocated_gib"),
         deltaValue(metrics, "cuda_allocated_gib"),
+        metricValue(metrics, "cuda_reserved_gib"),
+        deltaValue(metrics, "cuda_reserved_gib"),
         metricValue(metrics, "cuda_device_used_gib"),
         deltaValue(metrics, "cuda_device_used_gib"),
         metricValue(metrics, "system_available_gib"),
