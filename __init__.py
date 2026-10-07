@@ -9,6 +9,10 @@ from comfy_api.latest import ComfyExtension
 from .nodes.probe import WorkflowDirectorTestMarker
 from .workflowdirector import VERSION as __version__
 
+# ComfyUI v0.39.0 still discovers custom-node frontend extensions through
+# WEB_DIRECTORY, including packages whose backend nodes use the V3 API.
+WEB_DIRECTORY = "./web"
+
 # Import registers the small diagnostic HTTP routes with ComfyUI.
 from .workflowdirector import routes as _routes  # noqa: F401
 
@@ -24,4 +28,4 @@ async def comfy_entrypoint():
     return WorkflowDirectorExtension()
 
 
-__all__ = ["comfy_entrypoint", "__version__"]
+__all__ = ["WEB_DIRECTORY", "comfy_entrypoint", "__version__"]
