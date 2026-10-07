@@ -8,6 +8,12 @@ from .adapters import (
     SubmissionTransportError,
 )
 from .director import DirectorEngine
+from .service import (
+    ActiveRunError,
+    DirectorRunService,
+    DuplicateRunError,
+    RunNotFoundError,
+)
 from .types import (
     JobAttemptRecord,
     JobState,
@@ -21,14 +27,18 @@ from .types import (
 
 __all__ = [
     "AdapterTransportError",
+    "ActiveRunError",
     "BoundaryObserver",
     "ComfyAdapter",
     "DirectorEngine",
+    "DirectorRunService",
+    "DuplicateRunError",
     "JobAttemptRecord",
     "JobState",
     "MemoryObservation",
     "NoopBoundaryObserver",
     "PreparedStep",
+    "RunNotFoundError",
     "RunPhase",
     "RunPlan",
     "RunRecord",
