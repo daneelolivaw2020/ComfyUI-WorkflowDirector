@@ -11,9 +11,7 @@ changing model-management behaviour?
 Use the latest official stable ComfyUI release tag when the lab begins and
 record the exact version.
 
-Current audited target on 2026-10-07:
-
-    ComfyUI v0.39.0
+See COMPATIBILITY.md for the currently audited stable release.
 
 Do not use the moving master branch as the laboratory baseline.
 
