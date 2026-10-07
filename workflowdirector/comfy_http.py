@@ -76,18 +76,43 @@ class ComfyHttpAdapter:
                 json=body,
                 timeout=self._timeout,
             ) as response:
-                payload = await self._read_json(response)
+                status = response.status
+                try:
+                    payload = await self._read_json(response)
+                except (
+                    aiohttp.ClientError,
+                    asyncio.TimeoutError,
+                    ComfyProtocolError,
+                ) as exc:
+                    if status == 200:
+                        # HTTP success means Comfy may already have accepted the
+                        # preassigned prompt id. Recover by UUID lookup instead
+                        # of treating this as a safe-to-retry failure.
+                        raise SubmissionTransportError(
+                            (
+                                "Comfy returned HTTP 200 but its acknowledgement "
+                                f"body could not be trusted: {type(exc).__name__}: {exc}"
+                            )
+                        ) from exc
 
-                if response.status != 200:
+                    raise PromptRejectedError(
+                        (
+                            f"Comfy rejected prompt submission (HTTP {status}) "
+                            f"and its response body could not be read: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                    ) from exc
+
+                if status != 200:
                     raise PromptRejectedError(
                         self._format_error(
                             "Comfy rejected prompt submission",
-                            response.status,
+                            status,
                             payload,
                         )
                     )
 
-        except PromptRejectedError:
+        except (PromptRejectedError, SubmissionTransportError):
             raise
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise SubmissionTransportError(
@@ -96,8 +121,11 @@ class ComfyHttpAdapter:
 
         acknowledged = payload.get("prompt_id")
         if not isinstance(acknowledged, str):
-            raise ComfyProtocolError(
-                "Prompt response did not contain a string prompt_id"
+            raise SubmissionTransportError(
+                (
+                    "Comfy returned HTTP 200 without a trustworthy prompt_id; "
+                    "recovering by the preassigned UUID"
+                )
             )
         return acknowledged
 
