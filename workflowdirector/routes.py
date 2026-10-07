@@ -1,4 +1,4 @@
-"""HTTP routes for WorkflowDirector diagnostics and Phase 1 runs."""
+"""HTTP routes for WorkflowDirector diagnostics and prepared runs."""
 
 from __future__ import annotations
 
@@ -14,16 +14,18 @@ from .memory import memory_snapshot
 from .run_api import RunRequestError, parse_run_request
 from .runtime import (
     BOUNDARY_MODE,
+    effective_observation_window_seconds,
     get_director_service,
-    observation_window_seconds,
 )
 
 
 @PromptServer.instance.routes.get("/workflowdirector/health")
 async def workflowdirector_health(_request):
     service_state = None
+    window_seconds = None
     try:
         service = get_director_service()
+        window_seconds = effective_observation_window_seconds()
         service_state = {
             "ready": True,
             "active_run_id": service.active_run_id,
@@ -42,7 +44,7 @@ async def workflowdirector_health(_request):
             "comfyui_version": getattr(comfyui_version, "__version__", None),
             "director_service": service_state,
             "boundary_mode": BOUNDARY_MODE,
-            "observation_window_seconds": observation_window_seconds(),
+            "observation_window_seconds": window_seconds,
         }
     )
 
@@ -92,6 +94,7 @@ async def workflowdirector_start_run(request):
             "ok": True,
             "run_id": plan.run_id,
             "boundary_mode": BOUNDARY_MODE,
+            "observation_window_seconds": effective_observation_window_seconds(),
             "record": record.to_dict(),
         },
         status=202,
@@ -120,6 +123,8 @@ async def workflowdirector_get_run(request):
         {
             "ok": True,
             "active": service.active_run_id == run_id,
+            "boundary_mode": BOUNDARY_MODE,
+            "observation_window_seconds": effective_observation_window_seconds(),
             "record": record.to_dict(),
         }
     )
