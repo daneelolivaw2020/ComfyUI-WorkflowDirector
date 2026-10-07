@@ -18,8 +18,8 @@ The project is new. Carrying compatibility code for old ComfyUI releases before
 the architecture is proven would add complexity without helping the primary
 goal.
 
-ComfyUI v0.37.0 is historically important because the original GGUF memory
-failure was observed there, but it is not a support target.
+The older environment where the original GGUF memory failure was observed is
+historical context only and is not a support target.
 
 ## Upgrade rule
 
