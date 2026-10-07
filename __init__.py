@@ -6,6 +6,7 @@ only after the lower-level execution/memory assumptions are validated.
 """
 
 from .nodes.probe import WorkflowDirectorTestMarker
+from .workflowdirector import VERSION as __version__
 
 # Import registers the small diagnostic HTTP routes with ComfyUI.
 from .workflowdirector import routes as _routes  # noqa: F401
@@ -18,6 +19,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WorkflowDirectorTestMarker": "WorkflowDirector · Test Marker",
 }
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
-
-__version__ = "0.0.1-dev"
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "__version__"]
