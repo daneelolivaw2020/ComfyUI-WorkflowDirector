@@ -82,6 +82,7 @@ See:
 - [Phase 0 lab](docs/PHASE0_LAB.md)
 - [Phase 1 run API](docs/PHASE1_RUN_API.md)
 - [Phase 2 memory observation](docs/PHASE2_MEMORY_OBSERVATION.md)
+- [First Colab T4 test](docs/FIRST_COLAB_T4_TEST.md)
 - [Code review protocol](docs/CODE_REVIEW_PROTOCOL.md)
 - [Memory barrier strategy](docs/MEMORY_BARRIER_STRATEGY.md)
 - [Context residency](docs/CONTEXT_RESIDENCY.md)
