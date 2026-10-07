@@ -18,11 +18,13 @@ Phase 1 proves only:
         |
     native Comfy job
 
-The current runtime reports:
+Phase 1 originally used:
 
     boundary_mode = noop-phase1
 
-This is intentional. Phase 1 does not claim that model memory has been released.
+The current development runtime has advanced to the non-destructive Phase 2
+observer. The Phase 1 sequencing guarantees remain the same; memory observation
+adds measurements but still does not claim that model memory has been released.
 
 ## Start a run
 
