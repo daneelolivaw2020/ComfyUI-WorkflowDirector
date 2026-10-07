@@ -112,3 +112,35 @@ Verified against the v0.39.0 source:
 - native /api/jobs/{job_id} support is present;
 - cgroup-aware RAM helpers are present;
 - psutil remains a ComfyUI dependency.
+
+
+### Finding 8 — audited version was duplicated across documents
+
+**Status: fixed.**
+
+The exact audited ComfyUI version is now centralized in COMPATIBILITY.md.
+Architecture and test documents refer to that source of truth instead of
+copying a release number that can become stale at different times.
+
+### Second-pass verification
+
+The corrected code was checked again against the exact v0.39.0 tag.
+
+Verified:
+
+- the v0.39.0 V3 node API supports `outputs=[]` with `is_output_node=True`;
+- v0.39.0 uses `fingerprint_inputs` for V3 cache invalidation and core code
+  itself uses `float("NaN")` to force re-execution;
+- v0.39.0 supports `io.NodeOutput(ui=...)`;
+- the native single-job endpoint is exactly `/api/jobs/{job_id}`;
+- a terminal Jobs API record comes from history after the prompt worker calls
+  `PromptExecutor.execute()` and then `task_done()`;
+- the code no longer needs a WorkflowDirector-specific queue-status endpoint.
+
+## Review result
+
+The current Phase 0 code is **statically ready for runtime validation** against
+the audited stable release.
+
+This does not claim that it has run successfully in Colab yet. Runtime loading,
+CUDA measurements and the two-job lifecycle still require the laboratory test.
