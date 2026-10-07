@@ -143,6 +143,54 @@ class ComfyHttpAdapter:
                 f"Unsupported Comfy job status: {raw_state!r}"
             ) from exc
 
+    async def get_active_job_ids(self) -> set[str]:
+        try:
+            async with self._session.get(
+                f"{self._base_url}/api/jobs?status=pending,in_progress&limit=100",
+                timeout=self._timeout,
+            ) as response:
+                payload = await self._read_json(response)
+                if response.status != 200:
+                    raise ComfyProtocolError(
+                        self._format_error(
+                            "Comfy active-job lookup failed",
+                            response.status,
+                            payload,
+                        )
+                    )
+        except ComfyProtocolError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise AdapterTransportError(
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        jobs = payload.get("jobs")
+        if not isinstance(jobs, list):
+            raise ComfyProtocolError(
+                "Active-job response did not contain a jobs list"
+            )
+
+        ids: set[str] = set()
+        for job in jobs:
+            if not isinstance(job, dict):
+                raise ComfyProtocolError(
+                    "Active-job response contained a non-object job"
+                )
+            job_id = job.get("id")
+            status = job.get("status")
+            if not isinstance(job_id, str) or not isinstance(status, str):
+                raise ComfyProtocolError(
+                    "Active-job entry is missing string id/status"
+                )
+            if status not in {"pending", "in_progress"}:
+                raise ComfyProtocolError(
+                    f"Active-job endpoint returned unexpected status {status!r}"
+                )
+            ids.add(job_id)
+
+        return ids
+
     @staticmethod
     async def _read_json(response: aiohttp.ClientResponse) -> dict[str, Any]:
         try:
