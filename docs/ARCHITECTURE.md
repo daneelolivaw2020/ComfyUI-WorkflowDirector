@@ -77,8 +77,8 @@ Use two different channels for two different purposes:
 A successful workflow boundary is reached only when the submitted job reports
 the terminal state `completed`.
 
-`execution_success` alone is not the boundary. In the currently audited
-ComfyUI v0.39.0 source it is emitted before the PromptExecutor finalizer runs.
+`execution_success` alone is not the boundary. In the currently audited stable release (see COMPATIBILITY.md) it is emitted
+before the PromptExecutor finalizer runs.
 
 ## Memory Barrier
 
