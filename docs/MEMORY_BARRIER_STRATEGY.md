@@ -49,19 +49,23 @@ Therefore:
 
 ## Post-job housekeeping timing
 
-Current ComfyUI's prompt worker marks a job done before it reaches the later
-housekeeping section that can call Python GC and `soft_empty_cache()`.
+Current ComfyUI's prompt worker marks a job done before the later section that
+may call Python GC and soft_empty_cache().
 
-The worker uses a 10-second GC interval.
+However, source review of v0.39.0 shows that merely waiting past the nominal
+10-second GC interval is not a reliable trigger. The worker updates its
+current_time after executing a queue item; when q.get(timeout=...) returns None
+while idle, that variable is not advanced in that path. Therefore an idle timer
+alone cannot be used as proof that housekeeping ran.
 
-Therefore the laboratory records at least:
+The laboratory still records:
 
     POST_A_IMMEDIATE
     POST_A_WINDOW_END
 
-with the second observation taken after an explicit lab observation window.
-The label does not claim that memory is mathematically stable; it marks the end
-of the configured observation window.
+but POST_A_WINDOW_END means only "end of the configured observation window".
+It is useful for observing natural memory drift and validating that no foreign
+job entered the boundary. It does not assert GC or memory stability.
 
 Workflow B is not queued during this observation window.
 
