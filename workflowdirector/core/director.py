@@ -193,6 +193,42 @@ class DirectorEngine:
         )
         return True
 
+    async def _wait_for_submission_visibility(
+        self,
+        *,
+        record: RunRecord,
+        step_id: str,
+        job_id: str,
+    ) -> JobState | None:
+        """Resolve an ambiguous submission without ever blindly resubmitting."""
+
+        for _ in range(self._submission_recovery_polls):
+            try:
+                state = await self._adapter.get_job_state(job_id)
+            except Exception as lookup_exc:
+                record.fail(
+                    "SUBMISSION_UNCERTAIN",
+                    (
+                        "Submission acknowledgement was lost and job lookup "
+                        f"failed: {type(lookup_exc).__name__}: {lookup_exc}"
+                    ),
+                )
+                return None
+
+            if state != JobState.UNKNOWN:
+                return state
+
+            await self._sleep(self._poll_interval)
+
+        record.fail(
+            "SUBMISSION_UNCERTAIN",
+            (
+                "Submission acknowledgement was lost and the prepared job id "
+                f"{job_id} remained unobservable. Refusing to resubmit."
+            ),
+        )
+        return None
+
     async def _wait_for_terminal(
         self,
         *,
