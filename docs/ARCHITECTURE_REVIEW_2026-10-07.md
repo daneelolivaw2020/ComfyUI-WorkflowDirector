@@ -81,21 +81,31 @@ Memory quiescence/release is a separate barrier phase.
 
 The next Workflow is never pre-queued while the barrier is being evaluated.
 
-### 7. Prefer current native memory primitives before custom cleanup
+### 7. Do not use the native /free endpoint as the first safe barrier
 
-ComfyUI currently exposes /free with two independent concepts:
-- free_memory: reset executor caches and schedule GC / soft CUDA cache cleanup
-- unload_models: explicitly unload models
+A source review of ComfyUI v0.39.0 found an important coupling.
 
-The first controlled barrier candidate is free_memory=true with
-unload_models=false.
+The /free route only sets the free_memory flag when free_memory=true. In the
+prompt worker, model unloading is then decided with:
 
-It must not be treated as synchronous merely because the HTTP call returned.
-The worker consumes the flag asynchronously, so the Director still needs
-post-request observation/settling before continuing.
+    flags.get("unload_models", free_memory)
 
-Explicit unload_models remains experimental because it reaches
-unload_all_models(), the path closest to the original failure class.
+Therefore a free_memory=true request causes unload_all_models() when no explicit
+unload_models flag is present. Sending unload_models=false in the HTTP body does
+not avoid this because the route does not store a false flag.
+
+This puts native /free in the same broad failure class as the aggressive unload
+path that originally killed the Colab runtime.
+
+WorkflowDirector therefore does **not** use /free in the initial safe barrier.
+
+The safer progression is:
+
+1. current defaults, observe only;
+2. cache-isolation run with --cache-none, observe only;
+3. if still necessary, diagnose remaining references;
+4. design a narrowly targeted post-job cleanup that does not route through
+   unload_all_models().
 
 ### 8. Context survival is explicit; residency is independent
 
@@ -185,13 +195,13 @@ Default RAM-pressure caching intentionally keeps useful outputs, including model
 patcher outputs, until pressure requires eviction. Retention under default cache
 is not automatically a leak.
 
-A strict release experiment uses --cache-none or the native free-memory cache
-reset as controlled variables.
+A strict release experiment first uses --cache-none as the controlled cache
+variable. Native /free is excluded from the initial safe path because current
+v0.39.0 couples free_memory to unload_all_models().
 
 ### Memory settling
 
-Job completed, native free-memory request accepted, and memory settled are three
-different events.
+Job completed and memory settled are different events.
 
 The barrier records immediate and settled observations. It must not use a fixed
 sleep as the product contract; fixed timing is only a laboratory aid. The final
