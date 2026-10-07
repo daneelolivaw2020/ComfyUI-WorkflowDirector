@@ -426,3 +426,55 @@ ambiguous accepted submission.
 memory_snapshot exposes only the length of current_loaded_models as a diagnostic
 registry count. It does not call loaded_models() and retain temporary strong
 references to ModelPatchers while observing a memory boundary.
+
+
+### Finding 34 — queue exclusivity had a check-to-submit race
+
+**Status: reduced further and covered by CI.**
+
+Checking for an empty queue before submission was not sufficient: an unrelated
+job could enter Comfy after the preflight and while the WorkflowDirector job was
+pending/in-progress.
+
+DirectorEngine now polls the native active-job set during non-terminal execution
+states and fails closed if any active id differs from the expected job id.
+
+This is still not a cryptographic/atomic queue lease; a foreign job that starts
+and completes wholly between observations is theoretically possible. Phase 2
+validation therefore still requires Auto Queue off and no manual submissions.
+
+### Finding 35 — active-job lookup artificially capped the queue view
+
+**Status: fixed.**
+
+The native Jobs API call used limit=100 even though the endpoint supports an
+unbounded result when limit is omitted. WorkflowDirector now asks for the full
+pending/in_progress set so queue-integrity checks do not silently ignore jobs
+past an arbitrary page limit.
+
+### Finding 36 — two post-job snapshots were weak diagnostic evidence
+
+**Status: improved.**
+
+ObservationBoundary now stores non-destructive intermediate samples across the
+configured window as well as POST_IMMEDIATE and POST_WINDOW_END. This reveals
+memory drift without interpreting elapsed time as proof of GC or stability.
+
+### Finding 37 — memory deltas needed to remain semantically separate
+
+**Status: fixed.**
+
+A baseline-relative memory summary now reports process RSS, system headroom,
+PyTorch allocated/reserved VRAM, device-global VRAM and model-registry count as
+separate deltas.
+
+The analyzer deliberately refuses to turn one declining metric into a
+"model unloaded" claim.
+
+### Finding 38 — v0.39.0 target was revalidated during the second Phase 2 audit
+
+**Status: verified.**
+
+The official latest stable ComfyUI release on 2026-10-07 remains v0.39.0, and
+the reviewed custom-route behaviour still supports both original and /api-
+prefixed non-static routes.
