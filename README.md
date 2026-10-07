@@ -88,6 +88,19 @@ See:
 - [Context residency](docs/CONTEXT_RESIDENCY.md)
 - [Model file locations](docs/MODEL_FILE_LOCATIONS.md)
 
+## Real-environment lab
+
+The first Colab/T4 package is checked in at:
+
+- [Colab T4 notebook](notebooks/WorkflowDirector_Colab_T4_Lab_v0_39.ipynb)
+- [Smoke Workflow A](workflows/lab_smoke_A.json)
+- [Smoke Workflow B](workflows/lab_smoke_B.json)
+- [Real-environment test gate](docs/REAL_ENV_TEST_2026-10-07.md)
+
+Run the smoke pair before installing GGUF or other heavy custom nodes. The
+notebook then separates default-cache, `--cache-none`, and the real
+GGUF/Power-LoRA A -> B experiment.
+
 ## Status
 
 Early design / proof-of-concept phase.
