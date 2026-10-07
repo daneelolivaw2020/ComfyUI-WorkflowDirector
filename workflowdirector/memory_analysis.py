@@ -108,6 +108,10 @@ def summarize_run_memory(record: RunRecord) -> dict[str, Any]:
             "label": baseline.label,
             "captured_at": baseline.captured_at,
             "snapshot": baseline.snapshot,
+            "metrics": compare_snapshots(
+                baseline.snapshot,
+                baseline.snapshot,
+            ),
         },
         "steps": steps,
         "interpretation": (
