@@ -9,9 +9,7 @@ begins. Do not develop against the moving master branch.
 
 Record the exact tag in the test log.
 
-Current audited target on 2026-10-07:
-
-    ComfyUI v0.39.0
+See COMPATIBILITY.md for the currently audited stable release.
 
 ## Phase 0 — Clean current environment
 
@@ -93,7 +91,7 @@ Test conceptually:
     Workflow 2
       Qwen + Klein Q6 + prompt/LoRA stack B
 
-Do not assume the failure mechanism is identical to the old v0.37 environment.
+Do not assume the failure mechanism is identical to the older environment where the problem was first observed.
 
 Target:
 
