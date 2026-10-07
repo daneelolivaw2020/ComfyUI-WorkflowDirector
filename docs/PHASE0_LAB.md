@@ -10,10 +10,10 @@ Can a clean ComfyUI installation load ComfyUI-WorkflowDirector and expose reliab
 
 For the first run install only:
 
-1. the pinned ComfyUI build under test;
+1. ComfyUI v0.37.0;
 2. ComfyUI-WorkflowDirector.
 
-Do **not** install GGUF, unload/cleanup nodes, RAM cache extensions, rgthree, Crystools, or the user's production custom-node bundle yet.
+Do **not** install GGUF, unload/cleanup nodes, RAM cache extensions, rgthree, Crystools, or the production custom-node bundle yet.
 
 Those are added only when the corresponding validation phase requires them.
 
@@ -21,32 +21,37 @@ Those are added only when the corresponding validation phase requires them.
 
 Once this repository is public:
 
-```bash
-cd /content/ComfyUI/custom_nodes
-git clone https://github.com/daneelolivaw2020/ComfyUI-WorkflowDirector.git
-```
+    cd /content/ComfyUI/custom_nodes
+    git clone https://github.com/daneelolivaw2020/ComfyUI-WorkflowDirector.git
 
 Restart ComfyUI after cloning.
 
-During active development it is acceptable to pull `main`. Once a known-good version exists, the Colab notebook should check out a pinned tag instead.
+During active development it is acceptable to pull main. Once a known-good version exists, the Colab notebook should check out a pinned tag instead.
 
 ## Smoke test
 
 After ComfyUI starts:
 
 1. Confirm the console does not report an import error for WorkflowDirector.
-2. Open:
-   - `/workflowdirector/health`
-   - `/workflowdirector/memory`
-   relative to the running ComfyUI URL.
-3. In ComfyUI add **WorkflowDirector · Test Marker**.
-4. Queue it.
+2. Open these routes relative to the running ComfyUI URL:
+   - /workflowdirector/health
+   - /workflowdirector/memory
+   - /workflowdirector/status
+3. Call /workflowdirector/memory once as a CUDA warm-up measurement.
+4. Use a second reading as the baseline. The first CUDA query may initialize a CUDA context and slightly change memory usage.
+5. In ComfyUI add **WorkflowDirector · Test Marker**.
+6. Queue it twice without changing its inputs.
+
+Expected behavior:
+
+- the marker executes both times rather than being served from cache;
+- both runs print fresh RAM/VRAM metrics;
+- /workflowdirector/status reports worker_idle=true when no prompt is executing;
+- queue_empty is true only when there is neither a running nor a pending prompt.
 
 Expected console output resembles:
 
-```text
-[WorkflowDirector] WorkflowDirector test marker | RAM RSS=... GiB | VRAM allocated=... GiB | reserved=... GiB | free=... GiB / ... GiB
-```
+    [WorkflowDirector] WorkflowDirector test marker | RAM RSS=... GiB | system available=... / ... GiB | VRAM torch allocated=... GiB | reserved=... GiB | device used=... GiB | free=... / ... GiB
 
 The exact values are machine-dependent.
 
