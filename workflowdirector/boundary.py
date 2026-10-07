@@ -128,14 +128,23 @@ class ObservationBoundary:
         ]
 
         deadline = self._clock() + self._window
+        sample_index = 0
+
         while self._clock() < deadline:
-            await self._sleep(
-                min(
-                    self._interval,
-                    max(0.0, deadline - self._clock()),
+            remaining = max(0.0, deadline - self._clock())
+            sleep_for = min(self._interval, remaining)
+            await self._sleep(sleep_for)
+
+            if self._clock() < deadline:
+                sample_index += 1
+                observations.append(
+                    await self._capture_quiet(
+                        label=f"POST_WINDOW_SAMPLE_{sample_index:03d}",
+                        step=step,
+                    )
                 )
-            )
-            await self._assert_quiet(step=step)
+            else:
+                await self._assert_quiet(step=step)
 
         observations.append(
             await self._capture_quiet(
