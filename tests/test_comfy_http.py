@@ -203,6 +203,44 @@ class ComfyHttpAdapterTests(unittest.IsolatedAsyncioTestCase):
                 "11111111-1111-1111-1111-111111111111"
             )
 
+    async def test_active_jobs_returns_pending_and_in_progress_ids(self):
+        session = FakeSession()
+        session.get_response = FakeResponse(
+            200,
+            {
+                "jobs": [
+                    {"id": "job-a", "status": "pending"},
+                    {"id": "job-b", "status": "in_progress"},
+                ]
+            },
+        )
+        adapter = ComfyHttpAdapter(
+            base_url="http://127.0.0.1:8188",
+            session=session,
+        )
+
+        ids = await adapter.get_active_job_ids()
+
+        self.assertEqual(ids, {"job-a", "job-b"})
+        self.assertIn(
+            "status=pending,in_progress",
+            session.gets[0][0],
+        )
+
+    async def test_active_jobs_rejects_unexpected_status(self):
+        session = FakeSession()
+        session.get_response = FakeResponse(
+            200,
+            {"jobs": [{"id": "job-a", "status": "completed"}]},
+        )
+        adapter = ComfyHttpAdapter(
+            base_url="http://127.0.0.1:8188",
+            session=session,
+        )
+
+        with self.assertRaises(ComfyProtocolError):
+            await adapter.get_active_job_ids()
+
     async def test_unknown_native_status_is_protocol_error(self):
         session = FakeSession()
         session.get_response = FakeResponse(200, {"status": "mystery"})
