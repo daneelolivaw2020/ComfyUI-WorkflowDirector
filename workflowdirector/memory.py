@@ -38,7 +38,7 @@ def memory_snapshot() -> dict[str, Any]:
         "system_ram": {
             "total_gib": _gib(system_total),
             "available_gib": _gib(system_available),
-            "used_gib": _gib(max(0, system_total - system_available)),
+            "unavailable_gib": _gib(max(0, system_total - system_available)),
         },
         "cuda_available": bool(torch.cuda.is_available()),
         "cuda": None,
