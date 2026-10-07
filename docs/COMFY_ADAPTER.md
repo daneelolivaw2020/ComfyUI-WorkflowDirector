@@ -61,12 +61,13 @@ prepared.
 The current Comfy executor routes execution_start/executing/executed and related
 messages using the client_id stored in prompt extra_data.
 
-Therefore a RunPlan can retain the initiating browser's client_id for live
-progress routing.
+The client_id is **not** part of the immutable RunPlan. It is ephemeral runtime
+routing state supplied when a run starts.
 
 The backend run must not depend on that browser remaining connected. If the
-browser disappears, sequencing continues; the frontend can later reconnect and
-recover state through the Director service and native Jobs API.
+browser disappears, sequencing continues. A future Director service can update
+the routing client id after frontend reconnection without changing the prepared
+workflow snapshots.
 
 ## Job lookup
 
@@ -94,7 +95,9 @@ The adapter raises SubmissionTransportError when acknowledgement is ambiguous.
 The Director then queries the preassigned job UUID and never blindly resubmits.
 
 Transient lookup connectivity failures raise AdapterTransportError and may be
-retried within the Director's polling budget.
+retried until the Director's monotonic timeout expires. Job waits are bounded by
+elapsed time, not by a fixed poll count, so changing poll frequency does not
+silently change the maximum Workflow duration.
 
 ## Memory endpoint
 
