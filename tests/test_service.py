@@ -49,6 +49,19 @@ class BlockingEngine:
         return record
 
 
+class NonTerminalEngine:
+    async def run(self, plan, *, client_id=None, record=None):
+        assert record is not None
+        record.phase = RunPhase.RUNNING
+        return record
+
+
+class ReplacementRecordEngine:
+    async def run(self, plan, *, client_id=None, record=None):
+        assert record is not None
+        return RunRecord(run_id=plan.run_id, phase=RunPhase.COMPLETED)
+
+
 class CrashingEngine:
     async def run(self, plan, *, client_id=None, record=None):
         assert record is not None
@@ -104,6 +117,26 @@ class DirectorRunServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(DuplicateRunError):
             await service.start(plan)
+
+    async def test_engine_cannot_return_non_terminal_state(self):
+        service = DirectorRunService(NonTerminalEngine())
+        plan = make_plan()
+
+        await service.start(plan)
+        final = await service.wait(plan.run_id)
+
+        self.assertEqual(final.phase, RunPhase.FAILED)
+        self.assertEqual(final.failure_code, "ENGINE_NON_TERMINAL")
+
+    async def test_engine_cannot_replace_service_owned_record(self):
+        service = DirectorRunService(ReplacementRecordEngine())
+        plan = make_plan()
+
+        await service.start(plan)
+        final = await service.wait(plan.run_id)
+
+        self.assertEqual(final.phase, RunPhase.FAILED)
+        self.assertEqual(final.failure_code, "ENGINE_RECORD_MISMATCH")
 
     async def test_engine_exception_becomes_failed_record(self):
         service = DirectorRunService(CrashingEngine())
