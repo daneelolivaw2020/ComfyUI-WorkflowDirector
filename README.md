@@ -6,6 +6,24 @@ WorkflowDirector coordinates multiple independent ComfyUI workflows while
 preserving shared Context between them and creating a real execution/memory
 boundary between workflows.
 
+## Mandatory runtime target
+
+WorkflowDirector must work on **Google Colab Free Tier with an NVIDIA T4 GPU and
+a standard-memory runtime**. This is a product requirement, not an optional
+compatibility target.
+
+Design decisions must therefore assume:
+
+- roughly 15 GiB-class T4 VRAM, not an A100/L4-class accelerator;
+- constrained standard Colab system RAM, not High-RAM/paid runtimes;
+- ephemeral local storage under /content;
+- runtime/kernel restarts can occur and persistent state must eventually survive
+  outside the backend process;
+- no dependency on paid Colab features.
+
+A change is not considered successful if it only works on a larger GPU or a
+paid/high-memory runtime.
+
 ## Compatibility policy
 
 During the proof-of-concept phase, WorkflowDirector targets the **current stable
