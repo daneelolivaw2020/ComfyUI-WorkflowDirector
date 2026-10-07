@@ -12,7 +12,11 @@ from . import VERSION
 from .core import ActiveRunError, DuplicateRunError, RunNotFoundError
 from .memory import memory_snapshot
 from .run_api import RunRequestError, parse_run_request
-from .runtime import BOUNDARY_MODE, get_director_service
+from .runtime import (
+    BOUNDARY_MODE,
+    get_director_service,
+    observation_window_seconds,
+)
 
 
 @PromptServer.instance.routes.get("/workflowdirector/health")
@@ -38,6 +42,7 @@ async def workflowdirector_health(_request):
             "comfyui_version": getattr(comfyui_version, "__version__", None),
             "director_service": service_state,
             "boundary_mode": BOUNDARY_MODE,
+            "observation_window_seconds": observation_window_seconds(),
         }
     )
 
