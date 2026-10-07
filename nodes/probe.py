@@ -1,50 +1,50 @@
-"""Trivial output node used to validate installation and execution events."""
+"""Trivial V3 output node used to validate installation and execution."""
 
 from __future__ import annotations
 
 import logging
 
+from comfy_api.latest import io
+
 from ..workflowdirector.memory import compact_memory_line, memory_snapshot
 
 
-class WorkflowDirectorTestMarker:
+class WorkflowDirectorTestMarker(io.ComfyNode):
     """An intentionally boring output node for Phase 0/1 laboratory tests."""
 
     @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "label": (
-                    "STRING",
-                    {
-                        "default": "WorkflowDirector test marker",
-                        "multiline": False,
-                    },
-                ),
-            }
-        }
-
-    RETURN_TYPES = ()
-    FUNCTION = "mark"
-    OUTPUT_NODE = True
-    CATEGORY = "Workflow Director/Lab"
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="WorkflowDirectorTestMarker",
+            display_name="WorkflowDirector · Test Marker",
+            category="Workflow Director/Lab",
+            inputs=[
+                io.String.Input(
+                    "label",
+                    default="WorkflowDirector test marker",
+                    multiline=False,
+                )
+            ],
+            outputs=[],
+            is_output_node=True,
+        )
 
     @classmethod
-    def IS_CHANGED(cls, label):
+    def fingerprint_inputs(cls, **kwargs):
         """Force execution on every queue run so measurements are never cached."""
 
-        return float("nan")
+        return float("NaN")
 
-    def mark(self, label):
+    @classmethod
+    def execute(cls, label) -> io.NodeOutput:
         snapshot = memory_snapshot()
         line = compact_memory_line(snapshot)
         logging.info("[WorkflowDirector] %s | %s", label, line)
 
-        return {
-            "ui": {
+        return io.NodeOutput(
+            ui={
                 "text": [
                     f"{label}\n{line}",
                 ]
-            },
-            "result": (),
-        }
+            }
+        )
