@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Protocol, Sequence
 
-from .types import JobState, MemoryObservation, PreparedStep
+from .types import JobState, MemoryObservation, PreparedStep, RunPlan
 
 
 class AdapterTransportError(RuntimeError):
@@ -36,6 +36,27 @@ class ComfyAdapter(Protocol):
 
     async def get_active_job_ids(self) -> set[str]:
         """Return native pending/in-progress job ids visible to ComfyUI."""
+
+
+
+class RunObserver(Protocol):
+    """Observe run-level state before the first Workflow is submitted."""
+
+    async def before_run(
+        self,
+        *,
+        plan: RunPlan,
+    ) -> Sequence[MemoryObservation]:
+        ...
+
+
+class NoopRunObserver:
+    async def before_run(
+        self,
+        *,
+        plan: RunPlan,
+    ) -> Sequence[MemoryObservation]:
+        return ()
 
 
 class BoundaryObserver(Protocol):
