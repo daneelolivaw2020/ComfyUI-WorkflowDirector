@@ -114,15 +114,23 @@ Therefore use this sequence:
         |
     remain idle; do not queue B
         |
-    POST_A_SETTLED
+    POST_A_WINDOW_END
         |
     only then continue
 
 POST_A_IMMEDIATE records the state as soon as the job is terminal.
-POST_A_SETTLED records the state after the worker has had time to perform its
-normal post-job housekeeping. Because current ComfyUI's worker GC interval is
-10 seconds, the laboratory should include an idle observation after that
-interval rather than drawing conclusions from one immediate snapshot.
+POST_A_WINDOW_END records a second state after a configured idle observation
+window.
+
+Important: on ComfyUI v0.39.0 an idle wait by itself does **not** prove that the
+worker ran its GC/soft-cache housekeeping. The worker calculates a queue timeout
+from its 10-second GC interval, but its current_time variable is updated after
+executing a queue item, not when an idle q.get() timeout returns None. Therefore
+WorkflowDirector must not interpret "waited more than 10 seconds" as evidence
+that GC occurred.
+
+The window is useful for observing natural drift and catching queue
+interference. It is not a cleanup primitive.
 
 ### 2C — Current-default cache observation
 
@@ -149,11 +157,13 @@ model references, repeat the same A-only experiment with one controlled change:
 
     --cache-none
 
-Then compare BASELINE, POST_A_IMMEDIATE and POST_A_SETTLED.
+Then compare BASELINE, POST_A_IMMEDIATE and POST_A_WINDOW_END.
 
 This removes the normal executor output cache as a confounder. It still does not
 guarantee that GGUF/model-management references disappear; that is what the
-experiment measures.
+experiment measures. PromptModelTracker.end() marks tracked dynamic patchers as
+no longer in use by the current prompt, but it does not unload the model
+registry.
 
 Do not add unload nodes or explicit destructive cleanup at this stage.
 
