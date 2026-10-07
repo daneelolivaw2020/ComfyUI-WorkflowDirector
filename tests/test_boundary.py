@@ -110,7 +110,12 @@ class ObservationBoundaryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [item.label for item in observations],
-            ["POST_IMMEDIATE", "POST_WINDOW_END"],
+            [
+                "POST_IMMEDIATE",
+                "POST_WINDOW_SAMPLE_001",
+                "POST_WINDOW_SAMPLE_002",
+                "POST_WINDOW_END",
+            ],
         )
         self.assertGreaterEqual(calls[-1] - calls[0], 3.0)
 
