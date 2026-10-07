@@ -34,6 +34,9 @@ class ComfyAdapter(Protocol):
     async def get_job_state(self, prompt_id: str) -> JobState:
         """Return current/terminal native job state or UNKNOWN when not found."""
 
+    async def get_active_job_ids(self) -> set[str]:
+        """Return native pending/in-progress job ids visible to ComfyUI."""
+
 
 class BoundaryObserver(Protocol):
     """Owns memory-boundary observation/policy outside prompt execution."""
