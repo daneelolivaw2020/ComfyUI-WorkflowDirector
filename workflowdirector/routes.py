@@ -12,7 +12,7 @@ from . import VERSION
 from .core import ActiveRunError, DuplicateRunError, RunNotFoundError
 from .memory import memory_snapshot
 from .run_api import RunRequestError, parse_run_request
-from .runtime import get_director_service
+from .runtime import BOUNDARY_MODE, get_director_service
 
 
 @PromptServer.instance.routes.get("/workflowdirector/health")
@@ -37,6 +37,7 @@ async def workflowdirector_health(_request):
             "workflowdirector_version": VERSION,
             "comfyui_version": getattr(comfyui_version, "__version__", None),
             "director_service": service_state,
+            "boundary_mode": BOUNDARY_MODE,
         }
     )
 
@@ -85,6 +86,7 @@ async def workflowdirector_start_run(request):
         {
             "ok": True,
             "run_id": plan.run_id,
+            "boundary_mode": BOUNDARY_MODE,
             "record": record.to_dict(),
         },
         status=202,
