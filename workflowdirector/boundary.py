@@ -36,24 +36,45 @@ class SnapshotRunObserver:
         *,
         snapshot: SnapshotFn,
         warm_up: bool = True,
+        active_jobs: ActiveJobsFn | None = None,
     ) -> None:
         self._snapshot = snapshot
         self._warm_up = warm_up
+        self._active_jobs = active_jobs
 
     async def before_run(
         self,
         *,
         plan: RunPlan,
     ) -> tuple[MemoryObservation, ...]:
+        await self._assert_quiet()
+
         if self._warm_up:
             self._snapshot()
+            await self._assert_quiet()
+
+        snapshot = self._snapshot()
+        await self._assert_quiet()
 
         return (
             MemoryObservation.capture(
                 "BASELINE",
-                self._snapshot(),
+                snapshot,
             ),
         )
+
+    async def _assert_quiet(self) -> None:
+        if self._active_jobs is None:
+            return
+
+        active_ids = await self._active_jobs()
+        if active_ids:
+            raise BoundaryInterferenceError(
+                (
+                    "Run baseline was contaminated by active Comfy job(s): "
+                    + ", ".join(sorted(active_ids))
+                )
+            )
 
 
 class ObservationBoundary:
