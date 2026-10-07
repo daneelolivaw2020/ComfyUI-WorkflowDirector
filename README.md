@@ -12,14 +12,13 @@ During the proof-of-concept phase, WorkflowDirector targets the **current stable
 ComfyUI release**, not an old compatibility baseline and not the moving
 `master` branch.
 
-Current audited stable release on 2026-10-07: **ComfyUI v0.39.0**.
+The currently audited release is recorded in [Compatibility](docs/COMPATIBILITY.md).
 
 When ComfyUI publishes a new stable release, WorkflowDirector should move to it
 after the compatibility review and laboratory tests pass. The exact ComfyUI tag
 used by each test run must be recorded for reproducibility.
 
-Older ComfyUI releases, including v0.37.0 where the original memory failure was
-observed, are not support targets during this early phase.
+Older ComfyUI releases are not support targets during this early phase.
 
 ## Why this exists
 
