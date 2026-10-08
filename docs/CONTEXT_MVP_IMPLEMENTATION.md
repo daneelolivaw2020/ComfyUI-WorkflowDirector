@@ -35,7 +35,12 @@ across top-level jobs. Values are identified by user-chosen keys, not fixed
 variables. Each native prompt gets its identity from Comfy's
 \`comfy_execution.utils.get_executing_context().prompt_id\` on the actual
 prompt worker thread. A manually queued prompt has no registered Director
-transaction and cannot read/write run Context.
+transaction and cannot read/write run Context. A `Context Put` in
+a manually queued workflow is an explicit pass-through only (logged; nothing
+is published). A `Context Get` still needs a previously committed value from
+an active Director run and therefore fails outside one. This manual-Get
+limitation must be addressed before claiming full standalone reproducibility
+for a downstream, Context-dependent workflow.
 
 ## Node types
 
