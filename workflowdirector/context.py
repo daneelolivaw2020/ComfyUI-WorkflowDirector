@@ -142,12 +142,20 @@ class ContextRegistry:
                     f"Context value {key!r} exceeds the per-entry RAM limit"
                 )
             session = self._require_session()
-            replaced_bytes = session.values.get(key, ContextValue(kind, None, 0)).size_bytes
-            pending_bytes = sum(entry.size_bytes for entry in patch.writes.values())
-            if (
-                session.total_bytes - replaced_bytes + pending_bytes + size_bytes
-                > self._max_total_bytes
-            ):
+            # Charge the *effective* post-commit footprint, not the sum of
+            # prior values plus every staged replacement. Each replacement
+            # releases the previous logical entry at the commit boundary.
+            projected = session.total_bytes
+            for pending_key, pending_entry in patch.writes.items():
+                old = session.values.get(pending_key)
+                projected += pending_entry.size_bytes - (
+                    old.size_bytes if old is not None else 0
+                )
+            previous = session.values.get(key)
+            projected += size_bytes - (
+                previous.size_bytes if previous is not None else 0
+            )
+            if projected > self._max_total_bytes:
                 raise ContextError(
                     "Context would exceed its CPU RAM limit; scratch spilling "
                     "has not been enabled yet"
