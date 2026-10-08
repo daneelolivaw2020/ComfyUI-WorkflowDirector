@@ -182,6 +182,7 @@ class DirectorEngine:
             if self._context is not None:
                 try:
                     published_keys = self._context.commit_step(job_id)
+                    record.context_manifest = self._context.manifest()
                     record.event(
                         "context_committed",
                         step_id=step.step_id,
