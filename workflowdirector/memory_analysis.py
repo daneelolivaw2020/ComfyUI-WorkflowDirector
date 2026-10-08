@@ -14,6 +14,9 @@ from .core import MemoryObservation, RunRecord
 
 _METRICS = {
     "process_rss_gib": ("process_rss_gib",),
+    "process_pss_anon_gib": ("process_memory", "pss_anon_gib"),
+    "process_pss_file_gib": ("process_memory", "pss_file_gib"),
+    "process_private_dirty_gib": ("process_memory", "private_dirty_gib"),
     "system_available_gib": ("system_ram", "available_gib"),
     "system_unavailable_gib": ("system_ram", "unavailable_gib"),
     "cuda_allocated_gib": ("cuda", "allocated_gib"),
