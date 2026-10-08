@@ -1,0 +1,87 @@
+{
+  "id": "c29f52e6-3b02-4e6e-b805-7b9afcc97813",
+  "revision": 0,
+  "last_node_id": 2,
+  "last_link_id": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "WorkflowDirectorContextGetString",
+      "pos": [
+        120,
+        120
+      ],
+      "size": [
+        320,
+        110
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "Context B · Read greeting",
+      "properties": {
+        "Node name for S&R": "WorkflowDirectorContextGetString"
+      },
+      "widgets_values": [
+        "greeting"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "WorkflowDirectorTestMarker",
+      "pos": [
+        510,
+        120
+      ],
+      "size": [
+        385,
+        135
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "label",
+          "type": "STRING",
+          "link": 1
+        }
+      ],
+      "outputs": [],
+      "title": "Context B · Observe greeting",
+      "properties": {
+        "Node name for S&R": "WorkflowDirectorTestMarker"
+      },
+      "widgets_values": [
+        "from Context A"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "workflowRendererVersion": "LG",
+    "frontendVersion": "1.53.10"
+  },
+  "version": 0.4
+}
