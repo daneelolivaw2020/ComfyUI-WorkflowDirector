@@ -21,6 +21,35 @@ class ContextNotFound(ContextError):
 
 
 VALID_TYPES = frozenset(("STRING", "IMAGE", "LATENT"))
+_CONTEXT_PUT_NODES = frozenset((
+    "WorkflowDirectorContextPutString",
+    "WorkflowDirectorContextPutImage",
+    "WorkflowDirectorContextPutLatent",
+))
+
+
+def validate_static_writers(prompt: dict | Any) -> None:
+    """Reject duplicate literal Context Put keys before submitting heavy jobs.
+
+    Dynamically linked key inputs are not statically resolvable and remain
+    protected by ContextRegistry.stage() at native node execution.
+    """
+    if not hasattr(prompt, "values"):
+        return
+    found: set[str] = set()
+    for node in prompt.values():
+        if not isinstance(node, dict) or node.get("class_type") not in _CONTEXT_PUT_NODES:
+            continue
+        key = node.get("inputs", {}).get("key")
+        if not isinstance(key, str):
+            continue
+        validate_key(key)
+        if key in found:
+            raise ContextError(
+                f"Multiple Context Put nodes publish key {key!r} in one workflow"
+            )
+        found.add(key)
+
 
 
 def validate_key(key: str) -> str:
