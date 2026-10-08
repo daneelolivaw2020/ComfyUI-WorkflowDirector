@@ -137,10 +137,19 @@ class DirectorRunService:
                     f"{type(exc).__name__}: {exc}",
                 )
         finally:
-            # Release committed/staged tensor references for this run on
-            # *every* terminal or exceptional path, including cancellation.
-            if self._context is not None:
-                self._context.end_run(plan.run_id)
-            if self._active_run_id == plan.run_id:
-                self._active_run_id = None
-            self._tasks.pop(plan.run_id, None)
+            try:
+                # Drop committed and staged CPU tensors on all exit paths.
+                if self._context is not None:
+                    self._context.end_run(plan.run_id)
+            except Exception as exc:
+                record.fail(
+                    "CONTEXT_TEARDOWN_FAILED",
+                    f"{type(exc).__name__}: {exc}",
+                )
+            finally:
+                # Never leave the service permanently locked because Context
+                # cleanup failed. A subsequent start will still check that
+                # its Context registry is available before scheduling a job.
+                if self._active_run_id == plan.run_id:
+                    self._active_run_id = None
+                self._tasks.pop(plan.run_id, None)
