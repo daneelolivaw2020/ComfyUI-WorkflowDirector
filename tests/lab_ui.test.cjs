@@ -203,7 +203,7 @@ test("ambiguous POST acknowledgement is fail-closed, with known UUID for recover
   assert.equal(e.lab.state.lastRunId, e.posted[0].run_id);
   await assert.rejects(
     () => e.lab.startRun([e.lab.state.A]),
-    /might still be active/
+    /may still be active/
   );
 });
 
