@@ -91,6 +91,25 @@ class TorchContextCodecTests(unittest.TestCase):
                 "LATENT", {"samples": object()}
             )
 
+    def test_native_empty_latent_image_downscale_ratio_roundtrips(self):
+        source = {
+            "samples": FakeTensor([0, 0, 0, 0]),
+            "downscale_ratio_spacial": 8,
+        }
+        estimate = self.codec.estimate_size("LATENT", source)
+        stored, size = self.codec.copy_in("LATENT", source)
+        self.assertEqual(estimate, 24)
+        self.assertEqual(size, 24)
+        self.assertEqual(stored["downscale_ratio_spacial"], 8)
+        out = self.codec.copy_out("LATENT", stored)
+        self.assertEqual(out["downscale_ratio_spacial"], 8)
+        self.assertEqual(out["samples"].device.type, "cpu")
+        with self.assertRaisesRegex(ContextError, "downscale_ratio_spacial"):
+            self.codec.copy_in("LATENT", {
+                "samples": FakeTensor([1]),
+                "downscale_ratio_spacial": object(),
+            })
+
     def test_rejects_overlarge_and_wrong_type(self):
         with self.assertRaisesRegex(ContextError, "safe Context"):
             self.codec.copy_in("IMAGE", FakeTensor(list(range(33))))
