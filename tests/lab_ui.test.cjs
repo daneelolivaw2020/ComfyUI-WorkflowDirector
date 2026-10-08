@@ -14,7 +14,7 @@ const source = fs.readFileSync("web/workflow_director_lab.js", "utf8")
   "\nglobalThis.__lab = { state, capture, prepareCurrentSteps, " +
   "openTabAndCompile, selectedWorkflowTab, announceStepEvents, startRun };";
 
-function makeEnvironment(options = {}) {
+function makeEnvironment(config = {}) {
   const tabs = new Map();
   const toasts = [];
   let activePath = null;
@@ -67,11 +67,11 @@ function makeEnvironment(options = {}) {
       if (options?.method === "POST") {
         const request = JSON.parse(options.body);
         posted.push(request);
-        if (options.rejectSubmission) {
+        if (config.rejectSubmission) {
           throw new Error("Simulated connection loss after POST");
         }
         return { ok: true, json: async () => ({
-          run_id: options.badAcknowledgement ? "wrong-run-id" : request.run_id,
+          run_id: config.badAcknowledgement ? "wrong-run-id" : request.run_id,
           record: { phase: "ready", events: [] },
         }) };
       }
