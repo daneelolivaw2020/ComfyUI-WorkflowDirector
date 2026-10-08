@@ -30,6 +30,11 @@ def _put(key: str, kind: str, value):
     registry = get_context_registry()
     prompt_id = _job_id()
     if registry.is_idle():
+        if registry.was_abandoned_job(prompt_id):
+            raise ContextError(
+                "This native job belongs to a Director run that already "
+                "failed or ended; refusing a delayed Context Put."
+            )
         # A workflow containing a Put remains independently runnable in
         # standard Comfy Queue. It acts as a transparent passthrough but does
         # *not* publish anything outside a Director run. When a Director run
