@@ -8,6 +8,13 @@ const state = {
   lastRun: null,
   pollToken: 0,
   isRunning: false,
+  autoRefresh: true,
+  followActive: true,
+  stepNotifications: true,
+  currentSteps: [],
+  announcedEvents: new Set(),
+  monitoringUncertain: false,
+  statusWarning: "",
 };
 
 function notify(severity, summary, detail = "") {
@@ -23,23 +30,209 @@ function snapshotCompiled(compiled) {
   return JSON.parse(JSON.stringify(compiled));
 }
 
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/*
+ * ComfyUI frontend 1.53.10: the top-bar WorkflowTab exposes a stable
+ * data-workflow-path, and SelectButton marks its active option.
+ * Do not guess a workflow from its display name or silently reuse an old
+ * captured prompt when the associated tab is missing.
+ */
+function workflowTabs() {
+  return [...document.querySelectorAll(".workflow-tabs-container [data-workflow-path]")];
+}
+
+function selectedWorkflowTab() {
+  const selected = workflowTabs().filter((tab) => {
+    let el = tab;
+    for (let depth = 0; el && depth < 5; depth++, el = el.parentElement) {
+      if (
+        el.getAttribute("aria-pressed") === "true" ||
+        el.getAttribute("aria-selected") === "true" ||
+        el.getAttribute("data-p-active") === "true" ||
+        el.classList?.contains("p-togglebutton-checked") ||
+        el.classList?.contains("p-highlight")
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
+  if (selected.length !== 1) {
+    throw new Error(
+      "Cannot identify exactly one active workflow tab. " +
+      "In ComfyUI Settings, set Workflow Tabs Position to Topbar; " +
+      "then select the workflow tab and retry. No stale capture was executed."
+    );
+  }
+  return selected[0];
+}
+
+function findWorkflowTab(path) {
+  return workflowTabs().find((tab) => tab.dataset.workflowPath === path) ?? null;
+}
+
+function tabName(tab) {
+  return tab?.querySelector(".workflow-label")?.textContent?.trim()
+    || tab?.dataset.workflowPath?.split("/").pop()
+    || "Unnamed workflow";
+}
+
+function assertCompiled(compiled, expectedId = null) {
+  const workflowId = compiled?.workflow?.id;
+  if (typeof workflowId !== "string" || !workflowId || !compiled?.output) {
+    throw new Error("ComfyUI did not return a valid compiled workflow and API prompt.");
+  }
+  if (expectedId && workflowId !== expectedId) {
+    throw new Error(
+      "Workflow tab identity changed: expected " + expectedId +
+      ", received " + workflowId + ". Recapture explicitly."
+    );
+  }
+  return compiled;
+}
+
+async function openTabAndCompile(path, expectedId) {
+  const tab = findWorkflowTab(path);
+  if (!tab) {
+    throw new Error(
+      "Registered workflow tab " + path +
+      " is closed or missing. Reopen it and capture that slot again."
+    );
+  }
+  if (selectedWorkflowTab().dataset.workflowPath !== path) {
+    (tab.querySelector(".workflow-label") || tab).click();
+  }
+
+  // The frontend tab selection and app.loadGraphData() are asynchronous.
+  // Never capture from the previous canvas while the new tab is loading.
+  const deadline = Date.now() + 12000;
+  let lastId = null;
+  while (Date.now() < deadline) {
+    const active = selectedWorkflowTab();
+    if (active.dataset.workflowPath === path) {
+      const compiled = await app.graphToPrompt();
+      lastId = compiled?.workflow?.id;
+      if (lastId === expectedId) {
+        return { compiled: snapshotCompiled(assertCompiled(compiled, expectedId)), tab: active };
+      }
+    }
+    await sleep(150);
+  }
+  throw new Error(
+    "Could not verify that ComfyUI loaded the expected canvas for " +
+    path + ". Expected workflow id " + expectedId +
+    ", observed " + (lastId ?? "none") +
+    ". No run was submitted."
+  );
+}
+
+async function prepareCurrentSteps(slots) {
+  if (!state.autoRefresh) {
+    // Manual mode is deliberately explicit: do not mutate captures.
+    return slots.map((slot) => ({ ...slot }));
+  }
+  const previousTab = selectedWorkflowTab();
+  const previousPath = previousTab.dataset.workflowPath;
+  const previousId = assertCompiled(await app.graphToPrompt()).workflow.id;
+  const workflowIds = slots.map((s) => s.workflow_id);
+  if (new Set(workflowIds).size !== workflowIds.length) {
+    throw new Error(
+      "Two linked tabs share a workflow UUID. Make each workflow a separate " +
+      "document with a unique UUID, then capture A and B again. No run was submitted."
+    );
+  }
+  const prepared = [];
+  try {
+    for (const slot of slots) {
+      if (!slot.tab_path) {
+        throw new Error("Capture " + slot.step_id + " again to bind its tab.");
+      }
+      const { compiled, tab } = await openTabAndCompile(slot.tab_path, slot.workflow_id);
+      prepared.push({
+        step_id: slot.step_id,
+        workflow_id: slot.workflow_id,
+        name: tabName(tab),
+        prompt: compiled.output,
+        workflow: compiled.workflow,
+        tab_path: slot.tab_path,
+      });
+    }
+  } finally {
+    // The run snapshot is independent of the visible tab. Restore the user's
+    // original view even on failure; the per-step follow option handles
+    // navigation once a native job actually begins.
+    const restore = findWorkflowTab(previousPath);
+    if (!restore) {
+      throw new Error(
+        "The original workflow tab was closed during preparation. " +
+        "No run was submitted."
+      );
+    }
+    // Wait for the *canvas*, not only the highlighted tab, to match the
+    // original view before the prepared jobs may be submitted.
+    await openTabAndCompile(previousPath, previousId);
+  }
+  return prepared;
+}
+
+function announceStepEvents(run) {
+  if (!state.lastRunId || !state.currentSteps.length) return;
+  const events = run?.record?.events ?? [];
+  for (const event of events) {
+    const kind = event.kind;
+    const step = state.currentSteps.find((s) => s.step_id === event.step_id);
+    if (!step) continue;
+    const stageKey = state.lastRunId + ":" + kind + ":" +
+      (event.job_id ?? "") + ":" + step.step_id + ":" + (event.detail ?? "");
+    if (state.announcedEvents.has(stageKey)) continue;
+    state.announcedEvents.add(stageKey);
+    if (kind === "job_state" && event.detail === "in_progress") {
+      if (state.stepNotifications) {
+        notify("info", "Workflow " + step.step_id + " running", step.name);
+      }
+      if (state.followActive && step.tab_path) {
+        const tab = findWorkflowTab(step.tab_path);
+        if (tab) {
+          (tab.querySelector(".workflow-label") || tab).click();
+        } else {
+          notify("warn", "Workflow tab not found", step.name);
+        }
+      }
+    }
+    if (kind === "boundary_completed" && state.stepNotifications) {
+      notify("success", "Workflow " + step.step_id + " completed", step.name);
+    }
+  }
+}
+
 async function capture(slot) {
-  const compiled = await app.graphToPrompt();
-  const frozen = snapshotCompiled(compiled);
-  const workflowId =
-    typeof frozen.workflow?.id === "string" && frozen.workflow.id
-      ? frozen.workflow.id
-      : "lab-" + slot.toLowerCase() + "-" + crypto.randomUUID();
+  if (state.isRunning) throw new Error("Cannot capture during a Director run.");
+  const activeTab = selectedWorkflowTab();
+  const frozen = snapshotCompiled(assertCompiled(await app.graphToPrompt()));
+  const path = activeTab.dataset.workflowPath;
+  const otherSlot = slot === "A" ? "B" : "A";
+  if (state[otherSlot]?.tab_path === path) {
+    throw new Error("A and B must refer to different workflow tabs.");
+  }
+  if (state[otherSlot]?.workflow_id === frozen.workflow.id) {
+    throw new Error(
+      "A and B share the same workflow UUID. Give each workflow its own " +
+      "unique ID before linking it. No run was submitted."
+    );
+  }
 
   state[slot] = {
     step_id: slot,
-    workflow_id: workflowId,
-    name: "Lab Workflow " + slot,
+    workflow_id: frozen.workflow.id,
+    name: tabName(activeTab),
+    tab_path: path,
     prompt: frozen.output,
     workflow: frozen.workflow,
   };
 
-  notify("success", "Workflow " + slot + " captured");
+  notify("success", "Workflow " + slot + " linked", state[slot].name);
   refreshAllPanels();
 }
 
@@ -162,6 +355,11 @@ async function fetchRunStatus(runId) {
 
   state.lastRunId = runId;
   state.lastRun = statusBody;
+  if (["completed", "failed", "cancelled"].includes(statusBody?.record?.phase)) {
+    state.monitoringUncertain = false;
+    state.statusWarning = "";
+  }
+  announceStepEvents(statusBody);
   refreshAllPanels();
   return statusBody;
 }
@@ -170,12 +368,21 @@ async function refreshLastRun() {
   if (!state.lastRunId) {
     throw new Error("No WorkflowDirector run has been started in this tab.");
   }
-  return await fetchRunStatus(state.lastRunId);
+  const result = await fetchRunStatus(state.lastRunId);
+  if (!["completed", "failed", "cancelled"].includes(result?.record?.phase)) {
+    state.statusWarning =
+      "The backend run is still active or not terminal. Do not start another run.";
+    refreshAllPanels();
+  }
+  return result;
 }
 
 async function startRun(steps) {
-  if (state.isRunning) {
-    throw new Error("A WorkflowDirector lab run is already active.");
+  if (state.isRunning || state.monitoringUncertain) {
+    throw new Error(
+      "A WorkflowDirector run may still be active. Reconnect to the last run " +
+      "with Refresh last run before submitting a new one."
+    );
   }
   if (!steps.length || steps.some((step) => !step)) {
     throw new Error("Capture the required workflow slots first.");
@@ -184,20 +391,38 @@ async function startRun(steps) {
   state.isRunning = true;
   refreshAllPanels();
 
+  let requestSent = false;
+  let acknowledged = false;
+  let rejected = false;
   try {
-    const response = await api.fetchApi("/workflowdirector/runs", {
+    const preparedSteps = await prepareCurrentSteps(steps);
+    state.currentSteps = preparedSteps;
+    state.announcedEvents = new Set();
+    state.statusWarning = "";
+    // Preassign and retain the run UUID before submission so a lost HTTP
+    // acknowledgement can be reconciled by GET /runs/{run_id}.
+    const runId = crypto.randomUUID();
+    const responsePromise = api.fetchApi("/workflowdirector/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      run_id: runId,
       client_id: api.clientId ?? null,
-      steps,
+      steps: preparedSteps.map(({ tab_path, ...step }) => step),
     }),
   });
-
-    const body = await response.json();
+    requestSent = true;
+    state.lastRunId = runId;
+    const response = await responsePromise;
     if (!response.ok) {
-      throw new Error(body?.error ?? "HTTP " + response.status);
+      rejected = true; // HTTP non-202 is an explicit backend rejection.
+      throw new Error("HTTP " + response.status + " — request rejected");
     }
+    const body = await response.json();
+    if (body?.run_id !== runId) {
+      throw new Error("Run acknowledgement ID mismatch");
+    }
+    acknowledged = true;
 
     state.lastRunId = body.run_id;
     state.lastRun = body;
@@ -206,9 +431,34 @@ async function startRun(steps) {
     refreshAllPanels();
     notify("info", "WorkflowDirector run started", body.run_id);
 
+    let consecutiveFailures = 0;
     while (token === state.pollToken) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const statusBody = await fetchRunStatus(body.run_id);
+      await sleep(500);
+      let statusBody;
+      try {
+        statusBody = await fetchRunStatus(body.run_id);
+        consecutiveFailures = 0;
+      } catch (pollError) {
+        consecutiveFailures += 1;
+        if (consecutiveFailures === 3) {
+          notify(
+            "warn",
+            "WorkflowDirector temporarily disconnected",
+            "Backend run may still be running; retrying status checks."
+          );
+        }
+        if (consecutiveFailures >= 12) {
+          state.monitoringUncertain = true;
+          state.statusWarning =
+            "Connection to the run was lost. Its backend execution may still " +
+            "be active. Use Refresh last run to reconcile; no new run is allowed.";
+          state.isRunning = false;
+          refreshAllPanels();
+          notify("error", "WorkflowDirector status uncertain", state.statusWarning);
+          return;
+        }
+        continue;
+      }
 
       const phase = statusBody?.record?.phase;
       if (["completed", "failed", "cancelled"].includes(phase)) {
@@ -224,6 +474,13 @@ async function startRun(steps) {
     }
   } catch (error) {
     state.isRunning = false;
+    if (requestSent && !acknowledged && !rejected) {
+      state.monitoringUncertain = true;
+      state.statusWarning =
+        "Run submission acknowledgement was lost or invalid. The backend " +
+        "might still be executing it. Use Refresh last run to check its UUID. " +
+        "Do not submit another run.";
+    }
     refreshAllPanels();
     throw error;
   }
@@ -260,7 +517,7 @@ function renderPanel(root) {
 
   const warning = document.createElement("div");
   warning.textContent =
-    "LAB ONLY — captures live only in this browser tab. Use fixed seeds and avoid nodes that depend on beforeQueued callbacks.";
+    "LAB ONLY — bind two OPEN TOPBAR workflow tabs. Fresh compile before each Run (optional); immutable during the run. Use fixed seeds; beforeQueued-dependent nodes remain experimental.";
   warning.style.fontWeight = "600";
   warning.style.marginBottom = "8px";
   root.appendChild(warning);
@@ -280,14 +537,14 @@ function renderPanel(root) {
     button(
       "Run A only",
       () => startRun([state.A]),
-      !state.A || state.isRunning
+      !state.A || state.isRunning || state.monitoringUncertain
     )
   );
   captures.appendChild(
     button(
       "Run A → B",
       () => startRun([state.A, state.B]),
-      !state.A || !state.B || state.isRunning
+      !state.A || !state.B || state.isRunning || state.monitoringUncertain
     )
   );
   captures.appendChild(
@@ -299,14 +556,46 @@ function renderPanel(root) {
   );
   root.appendChild(captures);
 
+  const options = document.createElement("div");
+  options.style.display = "flex";
+  options.style.gap = "14px";
+  options.style.flexWrap = "wrap";
+  options.style.marginTop = "10px";
+  for (const [key, text] of [
+    ["autoRefresh", "Refresh linked tabs before Run"],
+    ["followActive", "Show executing workflow tab"],
+    ["stepNotifications", "Notify on each workflow"],
+  ]) {
+    const label = document.createElement("label");
+    label.style.display = "flex";
+    label.style.gap = "5px";
+    label.style.alignItems = "center";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = state[key];
+    checkbox.disabled = state.isRunning;
+    checkbox.addEventListener("change", () => { state[key] = checkbox.checked; });
+    label.append(checkbox, document.createTextNode(text));
+    options.appendChild(label);
+  }
+  root.appendChild(options);
+
   const slots = document.createElement("div");
   slots.style.margin = "8px 0";
   slots.textContent =
-    "Browser-memory captures — A: " +
-    (state.A ? state.A.workflow_id : "not captured") +
+    "Linked tabs (browser memory) — A: " +
+    (state.A ? state.A.name + " [" + state.A.workflow_id + "]" : "not linked") +
     " | B: " +
-    (state.B ? state.B.workflow_id : "not captured");
+    (state.B ? state.B.name + " [" + state.B.workflow_id + "]" : "not linked") +
+    (state.autoRefresh ? " | compiled fresh before each Run" : " | manual snapshots");
   root.appendChild(slots);
+  if (state.statusWarning) {
+    const warning = document.createElement("div");
+    warning.textContent = state.statusWarning;
+    warning.style.color = "var(--error-color, #cf534a)";
+    warning.style.fontWeight = "600";
+    root.appendChild(warning);
+  }
 
   const run = state.lastRun;
   if (!run) return;
