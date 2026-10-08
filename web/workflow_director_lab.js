@@ -8,6 +8,11 @@ const state = {
   lastRun: null,
   pollToken: 0,
   isRunning: false,
+  autoRefresh: true,
+  followActive: true,
+  stepNotifications: true,
+  currentSteps: [],
+  announcedEvents: new Set(),
 };
 
 function notify(severity, summary, detail = "") {
@@ -23,23 +28,189 @@ function snapshotCompiled(compiled) {
   return JSON.parse(JSON.stringify(compiled));
 }
 
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/*
+ * ComfyUI frontend 1.53.10: the top-bar WorkflowTab exposes a stable
+ * data-workflow-path, and SelectButton marks its active option.
+ * Do not guess a workflow from its display name or silently reuse an old
+ * captured prompt when the associated tab is missing.
+ */
+function workflowTabs() {
+  return [...document.querySelectorAll(".workflow-tabs-container [data-workflow-path]")];
+}
+
+function selectedWorkflowTab() {
+  const selected = workflowTabs().filter((tab) => {
+    let el = tab;
+    for (let depth = 0; el && depth < 5; depth++, el = el.parentElement) {
+      if (
+        el.getAttribute("aria-pressed") === "true" ||
+        el.getAttribute("aria-selected") === "true" ||
+        el.getAttribute("data-p-active") === "true" ||
+        el.classList?.contains("p-togglebutton-checked") ||
+        el.classList?.contains("p-highlight")
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
+  if (selected.length !== 1) {
+    throw new Error(
+      "Cannot identify exactly one active workflow tab. " +
+      "In ComfyUI Settings, set Workflow Tabs Position to Topbar; " +
+      "then select the workflow tab and retry. No stale capture was executed."
+    );
+  }
+  return selected[0];
+}
+
+function findWorkflowTab(path) {
+  return workflowTabs().find((tab) => tab.dataset.workflowPath === path) ?? null;
+}
+
+function tabName(tab) {
+  return tab?.querySelector(".workflow-label")?.textContent?.trim()
+    || tab?.dataset.workflowPath?.split("/").pop()
+    || "Unnamed workflow";
+}
+
+function assertCompiled(compiled, expectedId = null) {
+  const workflowId = compiled?.workflow?.id;
+  if (typeof workflowId !== "string" || !workflowId || !compiled?.output) {
+    throw new Error("ComfyUI did not return a valid compiled workflow and API prompt.");
+  }
+  if (expectedId && workflowId !== expectedId) {
+    throw new Error(
+      "Workflow tab identity changed: expected " + expectedId +
+      ", received " + workflowId + ". Recapture explicitly."
+    );
+  }
+  return compiled;
+}
+
+async function openTabAndCompile(path, expectedId) {
+  const tab = findWorkflowTab(path);
+  if (!tab) {
+    throw new Error(
+      "Registered workflow tab " + path +
+      " is closed or missing. Reopen it and capture that slot again."
+    );
+  }
+  if (selectedWorkflowTab().dataset.workflowPath !== path) {
+    (tab.querySelector(".workflow-label") || tab).click();
+  }
+
+  // The frontend tab selection and app.loadGraphData() are asynchronous.
+  // Never capture from the previous canvas while the new tab is loading.
+  const deadline = Date.now() + 12000;
+  let lastId = null;
+  while (Date.now() < deadline) {
+    const active = selectedWorkflowTab();
+    if (active.dataset.workflowPath === path) {
+      const compiled = await app.graphToPrompt();
+      lastId = compiled?.workflow?.id;
+      if (lastId === expectedId) {
+        return { compiled: snapshotCompiled(assertCompiled(compiled, expectedId)), tab: active };
+      }
+    }
+    await sleep(150);
+  }
+  throw new Error(
+    "Could not verify that ComfyUI loaded the expected canvas for " +
+    path + ". Expected workflow id " + expectedId +
+    ", observed " + (lastId ?? "none") +
+    ". No run was submitted."
+  );
+}
+
+async function prepareCurrentSteps(slots) {
+  if (!state.autoRefresh) {
+    // Manual mode is deliberately explicit: do not mutate captures.
+    return slots.map((slot) => ({ ...slot }));
+  }
+  const previousTab = selectedWorkflowTab();
+  const previousPath = previousTab.dataset.workflowPath;
+  const prepared = [];
+  try {
+    for (const slot of slots) {
+      if (!slot.tab_path) {
+        throw new Error("Capture " + slot.step_id + " again to bind its tab.");
+      }
+      const { compiled, tab } = await openTabAndCompile(slot.tab_path, slot.workflow_id);
+      prepared.push({
+        step_id: slot.step_id,
+        workflow_id: slot.workflow_id,
+        name: tabName(tab),
+        prompt: compiled.output,
+        workflow: compiled.workflow,
+        tab_path: slot.tab_path,
+      });
+    }
+  } finally {
+    // The run snapshot is independent of the visible tab. Restore the user's
+    // original view even on failure; the per-step follow option handles
+    // navigation once a native job actually begins.
+    const restore = findWorkflowTab(previousPath);
+    if (restore && selectedWorkflowTab().dataset.workflowPath !== previousPath) {
+      (restore.querySelector(".workflow-label") || restore).click();
+    }
+  }
+  return prepared;
+}
+
+function announceStepEvents(run) {
+  if (!state.lastRunId || !state.currentSteps.length) return;
+  const events = run?.record?.events ?? [];
+  for (const event of events) {
+    const kind = event.kind;
+    const step = state.currentSteps.find((s) => s.step_id === event.step_id);
+    if (!step) continue;
+    const stageKey = state.lastRunId + ":" + kind + ":" +
+      (event.job_id ?? "") + ":" + step.step_id + ":" + (event.detail ?? "");
+    if (state.announcedEvents.has(stageKey)) continue;
+    state.announcedEvents.add(stageKey);
+    if (kind === "job_state" && event.detail === "in_progress") {
+      if (state.stepNotifications) {
+        notify("info", "Workflow " + step.step_id + " running", step.name);
+      }
+      if (state.followActive && step.tab_path) {
+        const tab = findWorkflowTab(step.tab_path);
+        if (tab) {
+          (tab.querySelector(".workflow-label") || tab).click();
+        } else {
+          notify("warn", "Workflow tab not found", step.name);
+        }
+      }
+    }
+    if (kind === "boundary_completed" && state.stepNotifications) {
+      notify("success", "Workflow " + step.step_id + " completed", step.name);
+    }
+  }
+}
+
 async function capture(slot) {
-  const compiled = await app.graphToPrompt();
-  const frozen = snapshotCompiled(compiled);
-  const workflowId =
-    typeof frozen.workflow?.id === "string" && frozen.workflow.id
-      ? frozen.workflow.id
-      : "lab-" + slot.toLowerCase() + "-" + crypto.randomUUID();
+  if (state.isRunning) throw new Error("Cannot capture during a Director run.");
+  const activeTab = selectedWorkflowTab();
+  const frozen = snapshotCompiled(assertCompiled(await app.graphToPrompt()));
+  const path = activeTab.dataset.workflowPath;
+  const otherSlot = slot === "A" ? "B" : "A";
+  if (state[otherSlot]?.tab_path === path) {
+    throw new Error("A and B must refer to different workflow tabs.");
+  }
 
   state[slot] = {
     step_id: slot,
-    workflow_id: workflowId,
-    name: "Lab Workflow " + slot,
+    workflow_id: frozen.workflow.id,
+    name: tabName(activeTab),
+    tab_path: path,
     prompt: frozen.output,
     workflow: frozen.workflow,
   };
 
-  notify("success", "Workflow " + slot + " captured");
+  notify("success", "Workflow " + slot + " linked", state[slot].name);
   refreshAllPanels();
 }
 
@@ -162,6 +333,7 @@ async function fetchRunStatus(runId) {
 
   state.lastRunId = runId;
   state.lastRun = statusBody;
+  announceStepEvents(statusBody);
   refreshAllPanels();
   return statusBody;
 }
@@ -185,12 +357,15 @@ async function startRun(steps) {
   refreshAllPanels();
 
   try {
+    const preparedSteps = await prepareCurrentSteps(steps);
+    state.currentSteps = preparedSteps;
+    state.announcedEvents = new Set();
     const response = await api.fetchApi("/workflowdirector/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       client_id: api.clientId ?? null,
-      steps,
+      steps: preparedSteps.map(({ tab_path, ...step }) => step),
     }),
   });
 
@@ -260,7 +435,7 @@ function renderPanel(root) {
 
   const warning = document.createElement("div");
   warning.textContent =
-    "LAB ONLY — captures live only in this browser tab. Use fixed seeds and avoid nodes that depend on beforeQueued callbacks.";
+    "LAB ONLY — bind two OPEN TOPBAR workflow tabs. Fresh compile before each Run (optional); immutable during the run. Use fixed seeds; beforeQueued-dependent nodes remain experimental.";
   warning.style.fontWeight = "600";
   warning.style.marginBottom = "8px";
   root.appendChild(warning);
@@ -299,13 +474,38 @@ function renderPanel(root) {
   );
   root.appendChild(captures);
 
+  const options = document.createElement("div");
+  options.style.display = "flex";
+  options.style.gap = "14px";
+  options.style.flexWrap = "wrap";
+  options.style.marginTop = "10px";
+  for (const [key, text] of [
+    ["autoRefresh", "Refresh linked tabs before Run"],
+    ["followActive", "Show executing workflow tab"],
+    ["stepNotifications", "Notify on each workflow"],
+  ]) {
+    const label = document.createElement("label");
+    label.style.display = "flex";
+    label.style.gap = "5px";
+    label.style.alignItems = "center";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = state[key];
+    checkbox.disabled = state.isRunning;
+    checkbox.addEventListener("change", () => { state[key] = checkbox.checked; });
+    label.append(checkbox, document.createTextNode(text));
+    options.appendChild(label);
+  }
+  root.appendChild(options);
+
   const slots = document.createElement("div");
   slots.style.margin = "8px 0";
   slots.textContent =
-    "Browser-memory captures — A: " +
-    (state.A ? state.A.workflow_id : "not captured") +
+    "Linked tabs (browser memory) — A: " +
+    (state.A ? state.A.name + " [" + state.A.workflow_id + "]" : "not linked") +
     " | B: " +
-    (state.B ? state.B.workflow_id : "not captured");
+    (state.B ? state.B.name + " [" + state.B.workflow_id + "]" : "not linked") +
+    (state.autoRefresh ? " | compiled fresh before each Run" : " | manual snapshots");
   root.appendChild(slots);
 
   const run = state.lastRun;
