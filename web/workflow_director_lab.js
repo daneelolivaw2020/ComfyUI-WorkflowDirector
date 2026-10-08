@@ -164,11 +164,15 @@ async function prepareCurrentSteps(slots) {
     // original view even on failure; the per-step follow option handles
     // navigation once a native job actually begins.
     const restore = findWorkflowTab(previousPath);
-    if (restore) {
-      // Wait for the *canvas*, not only the highlighted tab, to match the
-      // original view before the prepared jobs may be submitted.
-      await openTabAndCompile(previousPath, previousId);
+    if (!restore) {
+      throw new Error(
+        "The original workflow tab was closed during preparation. " +
+        "No run was submitted."
+      );
     }
+    // Wait for the *canvas*, not only the highlighted tab, to match the
+    // original view before the prepared jobs may be submitted.
+    await openTabAndCompile(previousPath, previousId);
   }
   return prepared;
 }
@@ -387,24 +391,38 @@ async function startRun(steps) {
   state.isRunning = true;
   refreshAllPanels();
 
+  let requestSent = false;
+  let acknowledged = false;
+  let rejected = false;
   try {
     const preparedSteps = await prepareCurrentSteps(steps);
     state.currentSteps = preparedSteps;
     state.announcedEvents = new Set();
     state.statusWarning = "";
-    const response = await api.fetchApi("/workflowdirector/runs", {
+    // Preassign and retain the run UUID before submission so a lost HTTP
+    // acknowledgement can be reconciled by GET /runs/{run_id}.
+    const runId = crypto.randomUUID();
+    const responsePromise = api.fetchApi("/workflowdirector/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      run_id: runId,
       client_id: api.clientId ?? null,
       steps: preparedSteps.map(({ tab_path, ...step }) => step),
     }),
   });
-
-    const body = await response.json();
+    requestSent = true;
+    state.lastRunId = runId;
+    const response = await responsePromise;
     if (!response.ok) {
-      throw new Error(body?.error ?? "HTTP " + response.status);
+      rejected = true; // HTTP non-202 is an explicit backend rejection.
+      throw new Error("HTTP " + response.status + " — request rejected");
     }
+    const body = await response.json();
+    if (body?.run_id !== runId) {
+      throw new Error("Run acknowledgement ID mismatch");
+    }
+    acknowledged = true;
 
     state.lastRunId = body.run_id;
     state.lastRun = body;
@@ -456,6 +474,13 @@ async function startRun(steps) {
     }
   } catch (error) {
     state.isRunning = false;
+    if (requestSent && !acknowledged && !rejected) {
+      state.monitoringUncertain = true;
+      state.statusWarning =
+        "Run submission acknowledgement was lost or invalid. The backend " +
+        "might still be executing it. Use Refresh last run to check its UUID. " +
+        "Do not submit another run.";
+    }
     refreshAllPanels();
     throw error;
   }
