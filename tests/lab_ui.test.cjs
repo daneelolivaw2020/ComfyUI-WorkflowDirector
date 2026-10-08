@@ -12,7 +12,7 @@ const vm = require("node:vm");
 const source = fs.readFileSync("web/workflow_director_lab.js", "utf8")
   .replace(/^import \{.*\} from .*;\s*$/gm, "") +
   "\nglobalThis.__lab = { state, capture, prepareCurrentSteps, " +
-  "openTabAndCompile, selectedWorkflowTab, announceStepEvents };";
+  "openTabAndCompile, selectedWorkflowTab, announceStepEvents, startRun };";
 
 function makeEnvironment() {
   const tabs = new Map();
@@ -60,11 +60,25 @@ function makeEnvironment() {
   const document = {
     querySelectorAll() { return [...tabs.values()]; },
   };
-  const api = { clientId: "test" };
+  const posted = [];
+  const api = {
+    clientId: "test",
+    async fetchApi(path, options) {
+      if (options?.method === "POST") {
+        posted.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({
+          run_id: "run-1", record: { phase: "ready", events: [] },
+        }) };
+      }
+      return { ok: true, json: async () => ({
+        run_id: "run-1", record: { phase: "completed", events: [] },
+      }) };
+    },
+  };
   const sandbox = { document, app, api, console, Date, setTimeout };
   vm.runInNewContext(source, sandbox, { filename: "workflow_director_lab.js" });
   return {
-    lab: sandbox.__lab, toasts, tabs, makeTab,
+    lab: sandbox.__lab, toasts, tabs, posted, makeTab,
     select(path) { activePath = path; },
     active() { return activePath; },
   };
@@ -133,4 +147,35 @@ test("step events announce names once and follow the matching workflow tab", asy
   assert.equal(e.toasts.length, 2);
   assert.match(e.toasts[0].detail, /Klein Q6/);
   assert.match(e.toasts[1].summary, /completed/);
+});
+
+
+test("Run submits the freshly compiled B exactly once, not its stale capture", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "A", "id-A", 11);
+  e.makeTab("temp/B", "B", "id-B", 22);
+  await e.lab.capture("A");
+  e.select("temp/B");
+  await e.lab.capture("B");
+  e.tabs.get("temp/B").seed = 99;
+  await e.lab.startRun([e.lab.state.A, e.lab.state.B]);
+  assert.equal(e.posted.length, 1);
+  assert.equal(e.posted[0].steps[0].prompt["1"].inputs.seed, 11);
+  assert.equal(e.posted[0].steps[1].prompt["1"].inputs.seed, 99);
+  assert.equal(e.posted[0].steps[1].tab_path, undefined);
+});
+
+test("Run refuses to call the backend when a linked tab was closed", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "A", "id-A");
+  e.makeTab("temp/B", "B", "id-B");
+  await e.lab.capture("A");
+  e.select("temp/B");
+  await e.lab.capture("B");
+  e.tabs.delete("temp/A");
+  await assert.rejects(
+    () => e.lab.startRun([e.lab.state.A, e.lab.state.B]),
+    /closed or missing/
+  );
+  assert.equal(e.posted.length, 0);
 });
