@@ -7,6 +7,7 @@ are discarded on failure, cancellation, unknown state or runtime teardown.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from threading import RLock
@@ -128,11 +129,28 @@ class ContextRegistry:
         self._lock = RLock()
         self._session: ContextSession | None = None
         self._patches: dict[str, StepPatch] = {}
+        # Bounded tombstones stop late native callbacks from a timed-out or
+        # aborted Director job masquerading as a normal manual Queue prompt.
+        self._retired_job_ids: set[str] = set()
+        self._retired_job_order: deque[str] = deque(maxlen=1024)
 
     def is_idle(self) -> bool:
         """True only when there is no Director run owning Context."""
         with self._lock:
             return self._session is None
+
+    def was_abandoned_job(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._retired_job_ids
+
+    def _retire_job(self, job_id: str) -> None:
+        if job_id in self._retired_job_ids:
+            return
+        if len(self._retired_job_order) == self._retired_job_order.maxlen:
+            evicted = self._retired_job_order.popleft()
+            self._retired_job_ids.discard(evicted)
+        self._retired_job_order.append(job_id)
+        self._retired_job_ids.add(job_id)
 
     def start_run(self, run_id: str) -> None:
         with self._lock:
@@ -148,7 +166,11 @@ class ContextRegistry:
                 return
             if self._session.run_id != run_id:
                 raise ContextError("Cannot close Context owned by another run")
-            # Drop all tensor references and uncommitted writes on every exit.
+            # An aborted native job might still be running after the
+            # orchestrator timed out. Do not treat its eventual Put as manual
+            # pass-through; the caller must see an explicit error.
+            for job_id in self._patches:
+                self._retire_job(job_id)
             self._patches.clear()
             self._session = None
 
@@ -230,7 +252,8 @@ class ContextRegistry:
 
     def discard_step(self, job_id: str) -> None:
         with self._lock:
-            self._patches.pop(job_id, None)
+            if self._patches.pop(job_id, None) is not None:
+                self._retire_job(job_id)
             if self._session is not None and self._session.active_job_id == job_id:
                 self._session.active_job_id = None
 
