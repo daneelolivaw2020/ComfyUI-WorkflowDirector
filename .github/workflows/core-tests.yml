@@ -25,5 +25,8 @@ jobs:
       - name: Check frontend JavaScript syntax
         run: node --check web/workflow_director_lab.js
 
+      - name: Test frontend lab behavior
+        run: node --test tests/lab_ui.test.cjs
+
       - name: Run backend-agnostic core tests
         run: python -m unittest discover -s tests -v
