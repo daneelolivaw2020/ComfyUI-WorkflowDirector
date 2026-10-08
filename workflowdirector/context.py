@@ -95,6 +95,11 @@ class ContextRegistry:
         self._session: ContextSession | None = None
         self._patches: dict[str, StepPatch] = {}
 
+    def is_idle(self) -> bool:
+        """True only when there is no Director run owning Context."""
+        with self._lock:
+            return self._session is None
+
     def start_run(self, run_id: str) -> None:
         with self._lock:
             if self._session is not None:
