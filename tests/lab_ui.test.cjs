@@ -14,7 +14,7 @@ const source = fs.readFileSync("web/workflow_director_lab.js", "utf8")
   "\nglobalThis.__lab = { state, capture, prepareCurrentSteps, " +
   "openTabAndCompile, selectedWorkflowTab, announceStepEvents, startRun };";
 
-function makeEnvironment() {
+function makeEnvironment(options = {}) {
   const tabs = new Map();
   const toasts = [];
   let activePath = null;
@@ -67,8 +67,12 @@ function makeEnvironment() {
       if (options?.method === "POST") {
         const request = JSON.parse(options.body);
         posted.push(request);
+        if (options.rejectSubmission) {
+          throw new Error("Simulated connection loss after POST");
+        }
         return { ok: true, json: async () => ({
-          run_id: request.run_id, record: { phase: "ready", events: [] },
+          run_id: options.badAcknowledgement ? "wrong-run-id" : request.run_id,
+          record: { phase: "ready", events: [] },
         }) };
       }
       return { ok: true, json: async () => ({
@@ -185,19 +189,41 @@ test("Run refuses to call the backend when a linked tab was closed", async () =>
 });
 
 
-test("ambiguous POST acknowledgement blocks subsequent runs and retains its UUID", async () => {
-  const e = makeEnvironment();
+
+test("ambiguous POST acknowledgement is fail-closed, with known UUID for recovery", async () => {
+  const e = makeEnvironment({ rejectSubmission: true });
   e.makeTab("temp/A", "A", "id-A");
   await e.lab.capture("A");
-  const submitted = e.lab.state.A;
-  e.lab.state.autoRefresh = false;
-  // Override API response after it may have accepted the submitted request.
-  e.lab.state.pollToken = 0;
-  // Simulate mismatch by returning a bad acknowledgement UUID.
-  // The adapter must not guess that the backend rejected it.
-  const original = e.lab.startRun;
-  assert.equal(typeof original, "function");
-  // A dedicated failure-injection environment below tests ambiguous ack.
-  assert.equal(e.lab.state.monitoringUncertain, false);
-  assert.equal(submitted.workflow_id, "id-A");
+  await assert.rejects(
+    () => e.lab.startRun([e.lab.state.A]),
+    /Simulated connection loss/
+  );
+  assert.equal(e.posted.length, 1);
+  assert.equal(e.lab.state.monitoringUncertain, true);
+  assert.equal(e.lab.state.lastRunId, e.posted[0].run_id);
+  await assert.rejects(
+    () => e.lab.startRun([e.lab.state.A]),
+    /might still be active/
+  );
+});
+
+test("two workflow tabs sharing the same UUID cannot be linked", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "A", "id-shared");
+  e.makeTab("temp/B", "B", "id-shared");
+  await e.lab.capture("A");
+  e.select("temp/B");
+  await assert.rejects(() => e.lab.capture("B"), /same workflow UUID/);
+});
+
+test("bad UUID acknowledgement is treated as ambiguous acceptance", async () => {
+  const e = makeEnvironment({ badAcknowledgement: true });
+  e.makeTab("temp/A", "A", "id-A");
+  await e.lab.capture("A");
+  await assert.rejects(
+    () => e.lab.startRun([e.lab.state.A]),
+    /acknowledgement ID mismatch/
+  );
+  assert.equal(e.lab.state.monitoringUncertain, true);
+  assert.equal(e.posted.length, 1);
 });
