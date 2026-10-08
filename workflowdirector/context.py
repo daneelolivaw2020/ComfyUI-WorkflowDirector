@@ -7,6 +7,7 @@ are discarded on failure, cancellation, unknown state or runtime teardown.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any, Protocol
@@ -28,7 +29,7 @@ _CONTEXT_PUT_NODES = frozenset((
 ))
 
 
-def validate_static_writers(prompt: dict | Any) -> None:
+def validate_static_writers(prompt: Mapping[str, Any]) -> None:
     """Reject duplicate literal Context Put keys before submitting heavy jobs.
 
     Dynamically linked key inputs are not statically resolvable and remain
@@ -38,9 +39,12 @@ def validate_static_writers(prompt: dict | Any) -> None:
         return
     found: set[str] = set()
     for node in prompt.values():
-        if not isinstance(node, dict) or node.get("class_type") not in _CONTEXT_PUT_NODES:
+        if not isinstance(node, Mapping) or node.get("class_type") not in _CONTEXT_PUT_NODES:
             continue
-        key = node.get("inputs", {}).get("key")
+        inputs = node.get("inputs")
+        if not isinstance(inputs, Mapping):
+            continue
+        key = inputs.get("key")
         if not isinstance(key, str):
             continue
         validate_key(key)
