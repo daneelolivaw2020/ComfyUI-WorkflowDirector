@@ -8,6 +8,8 @@ submitting the job. A manual Queue outside Director fails closed.
 
 from __future__ import annotations
 
+import logging
+
 from comfy_api.latest import io
 from comfy_execution.utils import get_executing_context
 
@@ -25,7 +27,20 @@ def _job_id() -> str:
 
 
 def _put(key: str, kind: str, value):
-    get_context_registry().stage(_job_id(), key, kind, value)
+    registry = get_context_registry()
+    prompt_id = _job_id()
+    if registry.is_idle():
+        # A workflow containing a Put remains independently runnable in
+        # standard Comfy Queue. It acts as a transparent passthrough but does
+        # *not* publish anything outside a Director run. When a Director run
+        # exists, mismatched job IDs remain hard errors.
+        logging.info(
+            "[WorkflowDirector] Manual Comfy job %s: Context Put %s (%s) "
+            "is passthrough only; no run Context was published",
+            prompt_id, key, kind,
+        )
+        return io.NodeOutput(value)
+    registry.stage(prompt_id, key, kind, value)
     return io.NodeOutput(value)
 
 
