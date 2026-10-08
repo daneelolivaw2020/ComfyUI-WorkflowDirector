@@ -13,6 +13,8 @@ const state = {
   stepNotifications: true,
   currentSteps: [],
   announcedEvents: new Set(),
+  monitoringUncertain: false,
+  statusWarning: "",
 };
 
 function notify(severity, summary, detail = "") {
@@ -133,6 +135,14 @@ async function prepareCurrentSteps(slots) {
   }
   const previousTab = selectedWorkflowTab();
   const previousPath = previousTab.dataset.workflowPath;
+  const previousId = assertCompiled(await app.graphToPrompt()).workflow.id;
+  const workflowIds = slots.map((s) => s.workflow_id);
+  if (new Set(workflowIds).size !== workflowIds.length) {
+    throw new Error(
+      "Two linked tabs share a workflow UUID. Make each workflow a separate " +
+      "document with a unique UUID, then capture A and B again. No run was submitted."
+    );
+  }
   const prepared = [];
   try {
     for (const slot of slots) {
@@ -154,8 +164,10 @@ async function prepareCurrentSteps(slots) {
     // original view even on failure; the per-step follow option handles
     // navigation once a native job actually begins.
     const restore = findWorkflowTab(previousPath);
-    if (restore && selectedWorkflowTab().dataset.workflowPath !== previousPath) {
-      (restore.querySelector(".workflow-label") || restore).click();
+    if (restore) {
+      // Wait for the *canvas*, not only the highlighted tab, to match the
+      // original view before the prepared jobs may be submitted.
+      await openTabAndCompile(previousPath, previousId);
     }
   }
   return prepared;
@@ -199,6 +211,12 @@ async function capture(slot) {
   const otherSlot = slot === "A" ? "B" : "A";
   if (state[otherSlot]?.tab_path === path) {
     throw new Error("A and B must refer to different workflow tabs.");
+  }
+  if (state[otherSlot]?.workflow_id === frozen.workflow.id) {
+    throw new Error(
+      "A and B share the same workflow UUID. Give each workflow its own " +
+      "unique ID before linking it. No run was submitted."
+    );
   }
 
   state[slot] = {
@@ -333,6 +351,10 @@ async function fetchRunStatus(runId) {
 
   state.lastRunId = runId;
   state.lastRun = statusBody;
+  if (["completed", "failed", "cancelled"].includes(statusBody?.record?.phase)) {
+    state.monitoringUncertain = false;
+    state.statusWarning = "";
+  }
   announceStepEvents(statusBody);
   refreshAllPanels();
   return statusBody;
@@ -342,12 +364,21 @@ async function refreshLastRun() {
   if (!state.lastRunId) {
     throw new Error("No WorkflowDirector run has been started in this tab.");
   }
-  return await fetchRunStatus(state.lastRunId);
+  const result = await fetchRunStatus(state.lastRunId);
+  if (!["completed", "failed", "cancelled"].includes(result?.record?.phase)) {
+    state.statusWarning =
+      "The backend run is still active or not terminal. Do not start another run.";
+    refreshAllPanels();
+  }
+  return result;
 }
 
 async function startRun(steps) {
-  if (state.isRunning) {
-    throw new Error("A WorkflowDirector lab run is already active.");
+  if (state.isRunning || state.monitoringUncertain) {
+    throw new Error(
+      "A WorkflowDirector run may still be active. Reconnect to the last run " +
+      "with Refresh last run before submitting a new one."
+    );
   }
   if (!steps.length || steps.some((step) => !step)) {
     throw new Error("Capture the required workflow slots first.");
@@ -360,6 +391,7 @@ async function startRun(steps) {
     const preparedSteps = await prepareCurrentSteps(steps);
     state.currentSteps = preparedSteps;
     state.announcedEvents = new Set();
+    state.statusWarning = "";
     const response = await api.fetchApi("/workflowdirector/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -381,9 +413,34 @@ async function startRun(steps) {
     refreshAllPanels();
     notify("info", "WorkflowDirector run started", body.run_id);
 
+    let consecutiveFailures = 0;
     while (token === state.pollToken) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const statusBody = await fetchRunStatus(body.run_id);
+      await sleep(500);
+      let statusBody;
+      try {
+        statusBody = await fetchRunStatus(body.run_id);
+        consecutiveFailures = 0;
+      } catch (pollError) {
+        consecutiveFailures += 1;
+        if (consecutiveFailures === 3) {
+          notify(
+            "warn",
+            "WorkflowDirector temporarily disconnected",
+            "Backend run may still be running; retrying status checks."
+          );
+        }
+        if (consecutiveFailures >= 12) {
+          state.monitoringUncertain = true;
+          state.statusWarning =
+            "Connection to the run was lost. Its backend execution may still " +
+            "be active. Use Refresh last run to reconcile; no new run is allowed.";
+          state.isRunning = false;
+          refreshAllPanels();
+          notify("error", "WorkflowDirector status uncertain", state.statusWarning);
+          return;
+        }
+        continue;
+      }
 
       const phase = statusBody?.record?.phase;
       if (["completed", "failed", "cancelled"].includes(phase)) {
@@ -455,14 +512,14 @@ function renderPanel(root) {
     button(
       "Run A only",
       () => startRun([state.A]),
-      !state.A || state.isRunning
+      !state.A || state.isRunning || state.monitoringUncertain
     )
   );
   captures.appendChild(
     button(
       "Run A → B",
       () => startRun([state.A, state.B]),
-      !state.A || !state.B || state.isRunning
+      !state.A || !state.B || state.isRunning || state.monitoringUncertain
     )
   );
   captures.appendChild(
@@ -507,6 +564,13 @@ function renderPanel(root) {
     (state.B ? state.B.name + " [" + state.B.workflow_id + "]" : "not linked") +
     (state.autoRefresh ? " | compiled fresh before each Run" : " | manual snapshots");
   root.appendChild(slots);
+  if (state.statusWarning) {
+    const warning = document.createElement("div");
+    warning.textContent = state.statusWarning;
+    warning.style.color = "var(--error-color, #cf534a)";
+    warning.style.fontWeight = "600";
+    root.appendChild(warning);
+  }
 
   const run = state.lastRun;
   if (!run) return;
