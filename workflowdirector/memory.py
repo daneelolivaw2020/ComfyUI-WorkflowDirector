@@ -15,6 +15,8 @@ import torch
 import comfy.model_management
 import comfy.system_memory
 
+from .proc_memory import process_smaps_rollup
+
 
 _GIB = 1024 ** 3
 
@@ -36,6 +38,7 @@ def memory_snapshot() -> dict[str, Any]:
     result: dict[str, Any] = {
         "pid": os.getpid(),
         "process_rss_gib": _gib(process_rss),
+        "process_memory": process_smaps_rollup(),
         "system_ram": {
             "total_gib": _gib(system_total),
             "available_gib": _gib(system_available),
