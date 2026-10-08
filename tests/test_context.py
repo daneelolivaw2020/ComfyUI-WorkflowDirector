@@ -127,6 +127,21 @@ class ContextRegistryTests(unittest.TestCase):
         self.assertEqual(store.manifest(), {})
         store.end_run("run")
 
+    def test_replacing_multiple_existing_keys_uses_effective_budget(self):
+        store = registry(max_entry=12, max_total=12)
+        store.start_run("run")
+        store.begin_step("run", "A", "job-A")
+        store.stage("job-A", "x", "STRING", "123456")
+        store.stage("job-A", "y", "STRING", "789012")
+        store.commit_step("job-A")
+        store.begin_step("run", "B", "job-B")
+        store.stage("job-B", "x", "STRING", "1")
+        store.stage("job-B", "y", "STRING", "2")
+        self.assertEqual(store.commit_step("job-B"), ("x", "y"))
+        self.assertEqual(store.manifest()["x"]["bytes"], 1)
+        self.assertEqual(store.manifest()["y"]["bytes"], 1)
+        store.end_run("run")
+
     def test_key_validation_and_run_cleanup(self):
         store = registry()
         store.start_run("run")
