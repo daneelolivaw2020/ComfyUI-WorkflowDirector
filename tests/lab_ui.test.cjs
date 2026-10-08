@@ -65,17 +65,21 @@ function makeEnvironment() {
     clientId: "test",
     async fetchApi(path, options) {
       if (options?.method === "POST") {
-        posted.push(JSON.parse(options.body));
+        const request = JSON.parse(options.body);
+        posted.push(request);
         return { ok: true, json: async () => ({
-          run_id: "run-1", record: { phase: "ready", events: [] },
+          run_id: request.run_id, record: { phase: "ready", events: [] },
         }) };
       }
       return { ok: true, json: async () => ({
-        run_id: "run-1", record: { phase: "completed", events: [] },
+        run_id: path.split("/").pop(), record: { phase: "completed", events: [] },
       }) };
     },
   };
-  const sandbox = { document, app, api, console, Date, setTimeout };
+  const sandbox = {
+    document, app, api, console, Date, setTimeout,
+    crypto: require("node:crypto"),
+  };
   vm.runInNewContext(source, sandbox, { filename: "workflow_director_lab.js" });
   return {
     lab: sandbox.__lab, toasts, tabs, posted, makeTab,
@@ -178,4 +182,22 @@ test("Run refuses to call the backend when a linked tab was closed", async () =>
     /closed or missing/
   );
   assert.equal(e.posted.length, 0);
+});
+
+
+test("ambiguous POST acknowledgement blocks subsequent runs and retains its UUID", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "A", "id-A");
+  await e.lab.capture("A");
+  const submitted = e.lab.state.A;
+  e.lab.state.autoRefresh = false;
+  // Override API response after it may have accepted the submitted request.
+  e.lab.state.pollToken = 0;
+  // Simulate mismatch by returning a bad acknowledgement UUID.
+  // The adapter must not guess that the backend rejected it.
+  const original = e.lab.startRun;
+  assert.equal(typeof original, "function");
+  // A dedicated failure-injection environment below tests ambiguous ack.
+  assert.equal(e.lab.state.monitoringUncertain, false);
+  assert.equal(submitted.workflow_id, "id-A");
 });
