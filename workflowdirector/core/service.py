@@ -40,8 +40,9 @@ class EngineProtocol(Protocol):
 class DirectorRunService:
     """Own one active Director run and retain completed RunRecords."""
 
-    def __init__(self, engine: EngineProtocol) -> None:
+    def __init__(self, engine: EngineProtocol, *, context=None) -> None:
         self._engine = engine
+        self._context = context
         self._records: dict[str, RunRecord] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._active_run_id: str | None = None
@@ -66,6 +67,9 @@ class DirectorRunService:
                 raise DuplicateRunError(
                     f"Run {plan.run_id} already exists"
                 )
+
+            if self._context is not None:
+                self._context.start_run(plan.run_id)
 
             record = RunRecord(run_id=plan.run_id)
             self._records[plan.run_id] = record
@@ -133,6 +137,10 @@ class DirectorRunService:
                     f"{type(exc).__name__}: {exc}",
                 )
         finally:
+            # Release committed/staged tensor references for this run on
+            # *every* terminal or exceptional path, including cancellation.
+            if self._context is not None:
+                self._context.end_run(plan.run_id)
             if self._active_run_id == plan.run_id:
                 self._active_run_id = None
             self._tasks.pop(plan.run_id, None)
