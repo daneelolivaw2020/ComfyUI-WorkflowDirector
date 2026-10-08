@@ -202,6 +202,10 @@ class ContextLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.phase, RunPhase.COMPLETED)
         self.assertEqual(adapter.b_read_value, "from-A")
         self.assertEqual(len(adapter.submitted), 2)
+        self.assertEqual(
+            record.context_manifest,
+            {"shared": {"type": "STRING", "bytes": 6}},
+        )
         self.assertTrue(
             any(event.kind == "context_committed" and event.step_id == "A"
                 for event in record.events)
