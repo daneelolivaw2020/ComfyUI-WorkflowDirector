@@ -11,6 +11,7 @@ from workflowdirector.context import (
     ContextNotFound,
     ContextRegistry,
 )
+from workflowdirector.run_api import RunRequestError, parse_run_request
 from workflowdirector.core import (
     DirectorEngine,
     DirectorRunService,
@@ -156,6 +157,48 @@ class ContextRegistryTests(unittest.TestCase):
         store.start_run("new-run")
         self.assertEqual(store.manifest(), {})
         store.end_run("new-run")
+
+
+
+
+class StaticContextPlanTests(unittest.TestCase):
+    def test_duplicate_literal_writers_are_rejected_before_queueing(self):
+        prompt = {
+            "1": {
+                "class_type": "WorkflowDirectorContextPutString",
+                "inputs": {"key": "same", "value": "a"},
+            },
+            "2": {
+                "class_type": "WorkflowDirectorContextPutImage",
+                "inputs": {"key": "same", "value": ["9", 0]},
+            },
+        }
+        with self.assertRaisesRegex(RunRequestError, "Multiple Context Put"):
+            parse_run_request({
+                "steps": [{
+                    "step_id": "A", "workflow_id": "wf-A",
+                    "prompt": prompt, "workflow": {},
+                }]
+            })
+
+    def test_distinct_literal_writers_are_allowed(self):
+        prompt = {
+            "1": {
+                "class_type": "WorkflowDirectorContextPutString",
+                "inputs": {"key": "first", "value": "a"},
+            },
+            "2": {
+                "class_type": "WorkflowDirectorContextPutImage",
+                "inputs": {"key": "second", "value": ["9", 0]},
+            },
+        }
+        plan, _ = parse_run_request({
+            "steps": [{
+                "step_id": "A", "workflow_id": "wf-A",
+                "prompt": prompt, "workflow": {},
+            }]
+        })
+        self.assertEqual(len(plan.steps), 1)
 
 
 class NativeJobAdapterWithContext:
