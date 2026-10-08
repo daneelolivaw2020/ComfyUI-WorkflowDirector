@@ -41,6 +41,7 @@ class DirectorEngine:
         *,
         boundary_observer: BoundaryObserver | None = None,
         run_observer: RunObserver | None = None,
+        context=None,
         poll_interval_seconds: float = 0.25,
         job_timeout_seconds: float = 3600.0,
         submission_recovery_timeout_seconds: float = 5.0,
@@ -57,6 +58,7 @@ class DirectorEngine:
         self._adapter = adapter
         self._boundary = boundary_observer or NoopBoundaryObserver()
         self._run_observer = run_observer or NoopRunObserver()
+        self._context = context
         self._poll_interval = poll_interval_seconds
         self._job_timeout = job_timeout_seconds
         self._submission_recovery_timeout = submission_recovery_timeout_seconds
@@ -129,6 +131,16 @@ class DirectorEngine:
                 job_id=job_id,
             )
 
+            if self._context is not None:
+                try:
+                    self._context.begin_step(plan.run_id, step.step_id, job_id)
+                except Exception as exc:
+                    record.fail(
+                        "CONTEXT_BEGIN_FAILED",
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    return record
+
             acknowledged = await self._submit_or_recover(
                 record=record,
                 step_id=step.step_id,
@@ -166,6 +178,23 @@ class DirectorEngine:
                     job_id=job_id,
                 )
                 return record
+
+            if self._context is not None:
+                try:
+                    published_keys = self._context.commit_step(job_id)
+                    record.context_manifest = self._context.manifest()
+                    record.event(
+                        "context_committed",
+                        step_id=step.step_id,
+                        job_id=job_id,
+                        detail=", ".join(published_keys),
+                    )
+                except Exception as exc:
+                    record.fail(
+                        "CONTEXT_COMMIT_FAILED",
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    return record
 
             try:
                 observations = await self._boundary.observe(

@@ -7,6 +7,11 @@ behaviour is validated against the exact stable tag used by the lab.
 from comfy_api.latest import ComfyExtension
 
 from .nodes.probe import WorkflowDirectorTestMarker
+from .nodes.context_nodes import (
+    ContextPutString, ContextGetString,
+    ContextPutImage, ContextGetImage,
+    ContextPutLatent, ContextGetLatent,
+)
 from .workflowdirector import VERSION as __version__
 
 # ComfyUI v0.39.0 still discovers custom-node frontend extensions through
@@ -21,6 +26,9 @@ class WorkflowDirectorExtension(ComfyExtension):
     async def get_node_list(self):
         return [
             WorkflowDirectorTestMarker,
+            ContextPutString, ContextGetString,
+            ContextPutImage, ContextGetImage,
+            ContextPutLatent, ContextGetLatent,
         ]
 
 

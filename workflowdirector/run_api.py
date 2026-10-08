@@ -10,6 +10,7 @@ from typing import Any
 import uuid
 
 from .core import PreparedStep, RunPlan
+from .context import ContextError, validate_static_writers
 
 
 class RunRequestError(ValueError):
@@ -47,6 +48,13 @@ def parse_run_request(payload: Mapping[str, Any]) -> tuple[RunPlan, str | None]:
             raise RunRequestError(f"steps[{index}].prompt must be an object")
         if not isinstance(workflow, Mapping):
             raise RunRequestError(f"steps[{index}].workflow must be an object")
+
+        try:
+            validate_static_writers(prompt)
+        except ContextError as exc:
+            raise RunRequestError(
+                f"steps[{index}] has invalid Context writers: {exc}"
+            ) from exc
 
         try:
             step = PreparedStep(

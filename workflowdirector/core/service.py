@@ -40,8 +40,9 @@ class EngineProtocol(Protocol):
 class DirectorRunService:
     """Own one active Director run and retain completed RunRecords."""
 
-    def __init__(self, engine: EngineProtocol) -> None:
+    def __init__(self, engine: EngineProtocol, *, context=None) -> None:
         self._engine = engine
+        self._context = context
         self._records: dict[str, RunRecord] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._active_run_id: str | None = None
@@ -66,6 +67,9 @@ class DirectorRunService:
                 raise DuplicateRunError(
                     f"Run {plan.run_id} already exists"
                 )
+
+            if self._context is not None:
+                self._context.start_run(plan.run_id)
 
             record = RunRecord(run_id=plan.run_id)
             self._records[plan.run_id] = record
@@ -133,6 +137,19 @@ class DirectorRunService:
                     f"{type(exc).__name__}: {exc}",
                 )
         finally:
-            if self._active_run_id == plan.run_id:
-                self._active_run_id = None
-            self._tasks.pop(plan.run_id, None)
+            try:
+                # Drop committed and staged CPU tensors on all exit paths.
+                if self._context is not None:
+                    self._context.end_run(plan.run_id)
+            except Exception as exc:
+                record.fail(
+                    "CONTEXT_TEARDOWN_FAILED",
+                    f"{type(exc).__name__}: {exc}",
+                )
+            finally:
+                # Never leave the service permanently locked because Context
+                # cleanup failed. A subsequent start will still check that
+                # its Context registry is available before scheduling a job.
+                if self._active_run_id == plan.run_id:
+                    self._active_run_id = None
+                self._tasks.pop(plan.run_id, None)

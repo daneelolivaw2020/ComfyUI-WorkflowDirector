@@ -160,6 +160,9 @@ class RunRecord:
     attempts: list[JobAttemptRecord] = field(default_factory=list)
     observations: list[MemoryObservation] = field(default_factory=list)
     events: list[RunEvent] = field(default_factory=list)
+    # Small metadata-only snapshot of committed Context keys for diagnostics.
+    # Actual tensors are never held by RunRecord or serialized to HTTP.
+    context_manifest: dict[str, dict[str, str | int]] = field(default_factory=dict)
     failure_code: str | None = None
     failure_detail: str | None = None
 

@@ -8,12 +8,23 @@ from server import PromptServer
 
 from .boundary import ObservationBoundary, SnapshotRunObserver
 from .comfy_http import ComfyHttpAdapter
+from .context import ContextRegistry
+from .context_codec import TorchContextCodec
 from .core import DirectorEngine, DirectorRunService
 from .memory import memory_snapshot
 
 
 _service: DirectorRunService | None = None
+_context: ContextRegistry | None = None
 _observation_window_used: float | None = None
+
+
+def get_context_registry() -> ContextRegistry:
+    """One bounded Context per Director run; no Torch import on startup."""
+    global _context
+    if _context is None:
+        _context = ContextRegistry(TorchContextCodec())
+    return _context
 
 BOUNDARY_MODE = "observe-phase2-nondestructive"
 _DEFAULT_OBSERVATION_WINDOW_SECONDS = 1.0
@@ -79,11 +90,13 @@ def get_director_service() -> DirectorRunService:
         sample_interval_seconds=0.25,
         active_jobs=adapter.get_active_job_ids,
     )
+    context = get_context_registry()
     engine = DirectorEngine(
         adapter,
         run_observer=run_observer,
         boundary_observer=boundary_observer,
+        context=context,
     )
-    _service = DirectorRunService(engine)
+    _service = DirectorRunService(engine, context=context)
     _observation_window_used = window_seconds
     return _service

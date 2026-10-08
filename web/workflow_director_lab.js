@@ -616,6 +616,29 @@ function renderPanel(root) {
     root.appendChild(failure);
   }
 
+  const committedContext = record.context_manifest ?? {};
+  if (Object.keys(committedContext).length) {
+    const title = document.createElement("div");
+    title.textContent = "Committed Context keys (metadata only; run-scoped)";
+    title.style.marginTop = "12px";
+    title.style.fontWeight = "600";
+    root.appendChild(title);
+    const table = document.createElement("table");
+    table.style.fontSize = "12px";
+    table.style.width = "100%";
+    for (const [key, meta] of Object.entries(committedContext)) {
+      const tr = document.createElement("tr");
+      for (const cell of [key, meta?.type ?? "?", String(meta?.bytes ?? "?") + " bytes"]) {
+        const td = document.createElement("td");
+        td.textContent = cell;
+        td.style.padding = "3px 7px";
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+    root.appendChild(table);
+  }
+
   const summary = run.memory_summary;
   if (summary?.baseline_found) {
     const title = document.createElement("div");
