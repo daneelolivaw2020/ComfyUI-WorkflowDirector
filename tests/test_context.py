@@ -169,6 +169,30 @@ class ContextRegistryTests(unittest.TestCase):
         self.assertEqual(codec.copies, 1)
         store.end_run("run")
 
+    def test_abandoned_job_tombstone_blocks_late_native_write(self):
+        store = registry()
+        store.start_run("run")
+        store.begin_step("run", "A", "job-A")
+        store.stage("job-A", "x", "STRING", "partial")
+        # Simulate a timeout or uncertain native job, after the orchestrator
+        # disposed Context but the Comfy worker might still be executing.
+        store.end_run("run")
+        self.assertTrue(store.is_idle())
+        self.assertTrue(store.was_abandoned_job("job-A"))
+        self.assertFalse(store.was_abandoned_job("manual-job"))
+        with self.assertRaises(ContextError):
+            store.stage("job-A", "x", "STRING", "late")
+
+    def test_abandoned_jobs_remain_bounded(self):
+        store = registry()
+        for i in range(1050):
+            store.start_run(f"run-{i}")
+            store.begin_step(f"run-{i}", "A", f"job-{i}")
+            store.end_run(f"run-{i}")
+        self.assertFalse(store.was_abandoned_job("job-0"))
+        self.assertTrue(store.was_abandoned_job("job-1049"))
+        self.assertLessEqual(len(store._retired_job_ids), 1024)
+
     def test_key_validation_and_run_cleanup(self):
         store = registry()
         store.start_run("run")
