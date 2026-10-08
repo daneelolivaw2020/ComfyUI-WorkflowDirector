@@ -7,6 +7,7 @@ are discarded on failure, cancellation, unknown state or runtime teardown.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from threading import RLock
@@ -76,6 +77,7 @@ def validate_type(kind: str) -> str:
 class ContextCodec(Protocol):
     """Convert values into detached CPU-safe copies; never keep caller references."""
 
+    def estimate_size(self, kind: str, value: Any) -> int: ...
     def copy_in(self, kind: str, value: Any) -> tuple[Any, int]: ...
     def copy_out(self, kind: str, value: Any) -> Any: ...
 
@@ -127,11 +129,28 @@ class ContextRegistry:
         self._lock = RLock()
         self._session: ContextSession | None = None
         self._patches: dict[str, StepPatch] = {}
+        # Bounded tombstones stop late native callbacks from a timed-out or
+        # aborted Director job masquerading as a normal manual Queue prompt.
+        self._retired_job_ids: set[str] = set()
+        self._retired_job_order: deque[str] = deque(maxlen=1024)
 
     def is_idle(self) -> bool:
         """True only when there is no Director run owning Context."""
         with self._lock:
             return self._session is None
+
+    def was_abandoned_job(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._retired_job_ids
+
+    def _retire_job(self, job_id: str) -> None:
+        if job_id in self._retired_job_ids:
+            return
+        if len(self._retired_job_order) == self._retired_job_order.maxlen:
+            evicted = self._retired_job_order.popleft()
+            self._retired_job_ids.discard(evicted)
+        self._retired_job_order.append(job_id)
+        self._retired_job_ids.add(job_id)
 
     def start_run(self, run_id: str) -> None:
         with self._lock:
@@ -147,7 +166,11 @@ class ContextRegistry:
                 return
             if self._session.run_id != run_id:
                 raise ContextError("Cannot close Context owned by another run")
-            # Drop all tensor references and uncommitted writes on every exit.
+            # An aborted native job might still be running after the
+            # orchestrator timed out. Do not treat its eventual Put as manual
+            # pass-through; the caller must see an explicit error.
+            for job_id in self._patches:
+                self._retire_job(job_id)
             self._patches.clear()
             self._session = None
 
@@ -172,31 +195,24 @@ class ContextRegistry:
                 raise ContextError(
                     f"Context key {key!r} has multiple writers in a single step"
                 )
-            # A model object is never accepted. A Torch tensor is detached,
-            # copied to CPU and checked by the codec before being retained.
-            stored, size_bytes = self._codec.copy_in(kind, value)
-            if size_bytes < 0 or size_bytes > self._max_entry_bytes:
+            session = self._require_session()
+            # Preflight *before* moving a CUDA tensor to host RAM. Account
+            # for committed and staged payloads coexisting until commit.
+            estimate = self._codec.estimate_size(kind, value)
+            if estimate < 0 or estimate > self._max_entry_bytes:
                 raise ContextError(
                     f"Context value {key!r} exceeds the per-entry RAM limit"
                 )
-            session = self._require_session()
-            # Charge the *effective* post-commit footprint, not the sum of
-            # prior values plus every staged replacement. Each replacement
-            # releases the previous logical entry at the commit boundary.
-            projected = session.total_bytes
-            for pending_key, pending_entry in patch.writes.items():
-                old = session.values.get(pending_key)
-                projected += pending_entry.size_bytes - (
-                    old.size_bytes if old is not None else 0
-                )
-            previous = session.values.get(key)
-            projected += size_bytes - (
-                previous.size_bytes if previous is not None else 0
-            )
-            if projected > self._max_total_bytes:
+            pending_bytes = sum(entry.size_bytes for entry in patch.writes.values())
+            if session.total_bytes + pending_bytes + estimate > self._max_total_bytes:
                 raise ContextError(
-                    "Context would exceed its CPU RAM limit; scratch spilling "
-                    "has not been enabled yet"
+                    "Context would exceed its CPU RAM budget while old and new "
+                    "values coexist; scratch spilling is not implemented yet"
+                )
+            stored, size_bytes = self._codec.copy_in(kind, value)
+            if size_bytes != estimate:
+                raise ContextError(
+                    "Context codec size mismatch; refusing to retain unchecked data"
                 )
             patch.writes[key] = ContextValue(kind, stored, size_bytes)
 
@@ -236,7 +252,8 @@ class ContextRegistry:
 
     def discard_step(self, job_id: str) -> None:
         with self._lock:
-            self._patches.pop(job_id, None)
+            if self._patches.pop(job_id, None) is not None:
+                self._retire_job(job_id)
             if self._session is not None and self._session.active_job_id == job_id:
                 self._session.active_job_id = None
 

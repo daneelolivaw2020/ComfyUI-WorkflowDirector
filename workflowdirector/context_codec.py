@@ -20,7 +20,7 @@ class TorchContextCodec:
             raise ValueError("max_tensor_bytes must be positive")
         self._max_tensor_bytes = max_tensor_bytes
 
-    def _copy_tensor(self, value: Any) -> tuple[Any, int]:
+    def _estimate_tensor(self, value: Any) -> int:
         import torch
 
         if not isinstance(value, torch.Tensor):
@@ -34,23 +34,9 @@ class TorchContextCodec:
         size = value.numel() * value.element_size()
         if size > self._max_tensor_bytes:
             raise ContextError("Tensor exceeds the safe Context CPU RAM limit")
-        # Copy even CPU tensors: no reference to the source node or its GPU
-        # storage must survive the prompt boundary.
-        copy = value.detach().to(device="cpu", copy=True).contiguous()
-        if copy.device.type != "cpu" or copy.requires_grad:
-            raise ContextError("Context tensor must be detached and CPU resident")
-        return copy, size
+        return size
 
-    def copy_in(self, kind: str, value: Any) -> tuple[Any, int]:
-        validate_type(kind)
-        if kind == "STRING":
-            if not isinstance(value, str):
-                raise ContextError("STRING Context requires a Python string")
-            return value, len(value.encode("utf-8"))
-
-        if kind == "IMAGE":
-            return self._copy_tensor(value)
-
+    def _latent_fields(self, value: Any):
         if not isinstance(value, Mapping) or "samples" not in value:
             raise ContextError("LATENT Context requires a mapping with 'samples'")
         allowed = {"samples", "noise_mask", "batch_index", "type"}
@@ -59,31 +45,64 @@ class TorchContextCodec:
             raise ContextError(
                 f"Unsupported LATENT metadata fields: {sorted(map(str, unknown))!r}"
             )
+        return value
 
-        result: dict[str, Any] = {}
-        total = 0
-        for name in ("samples", "noise_mask"):
-            if name in value:
-                copied, size = self._copy_tensor(value[name])
-                result[name] = copied
-                total += size
-        if "batch_index" in value:
-            indices = value["batch_index"]
+    def estimate_size(self, kind: str, value: Any) -> int:
+        """Validate and estimate payload bytes before allocating CPU tensors."""
+        validate_type(kind)
+        if kind == "STRING":
+            if not isinstance(value, str):
+                raise ContextError("STRING Context requires a Python string")
+            return len(value.encode("utf-8"))
+        if kind == "IMAGE":
+            return self._estimate_tensor(value)
+
+        latent = self._latent_fields(value)
+        total = self._estimate_tensor(latent["samples"])
+        if "noise_mask" in latent:
+            total += self._estimate_tensor(latent["noise_mask"])
+        if "batch_index" in latent:
+            indices = latent["batch_index"]
             if not isinstance(indices, (list, tuple)) or not all(
                 type(i) is int for i in indices
             ):
                 raise ContextError("LATENT batch_index must be a sequence of integers")
             if len(indices) > 65536:
                 raise ContextError("LATENT batch_index is too large")
-            result["batch_index"] = list(indices)
             total += len(indices) * 8
-        if "type" in value:
-            latent_type = value["type"]
+        if "type" in latent:
+            latent_type = latent["type"]
             if not isinstance(latent_type, str) or len(latent_type) > 128:
                 raise ContextError("LATENT type metadata must be a short string")
-            result["type"] = latent_type
             total += len(latent_type.encode("utf-8"))
-        return result, total
+        return total
+
+    def _copy_tensor(self, value: Any):
+        size = self._estimate_tensor(value)
+        # Always copy, even when already on CPU. Comfy's source tensor is
+        # not owned by Context and may still reference a live execution.
+        copy = value.detach().to(device="cpu", copy=True).contiguous()
+        if copy.device.type != "cpu" or copy.requires_grad:
+            raise ContextError("Context tensor must be detached and CPU resident")
+        return copy, size
+
+    def copy_in(self, kind: str, value: Any) -> tuple[Any, int]:
+        size = self.estimate_size(kind, value)
+        if kind == "STRING":
+            return value, size
+        if kind == "IMAGE":
+            return self._copy_tensor(value)
+
+        result: dict[str, Any] = {}
+        for name in ("samples", "noise_mask"):
+            if name in value:
+                copied, _ = self._copy_tensor(value[name])
+                result[name] = copied
+        if "batch_index" in value:
+            result["batch_index"] = list(value["batch_index"])
+        if "type" in value:
+            result["type"] = value["type"]
+        return result, size
 
     def copy_out(self, kind: str, value: Any) -> Any:
         validate_type(kind)

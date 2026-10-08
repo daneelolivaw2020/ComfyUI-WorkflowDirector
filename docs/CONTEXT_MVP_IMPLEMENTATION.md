@@ -83,7 +83,14 @@ restart recovery.
 
 Default bounds:
 - maximum 128 MiB per value/tensor;
-- maximum 256 MiB of committed-plus-staged logical Context per run.
+- maximum 256 MiB of already-committed **plus staged** Context payloads while
+  both old and replacement values still coexist in RAM.
+
+A replacement can fail even when its eventual committed footprint would fit:
+the old entry stays alive until the step's atomic commit. The codec now
+preflights tensor and LATENT sizes **before** allocating a new CPU copy.
+These limits do not account for source graph tensors, Context Get clones,
+Python/Torch object overhead or other Comfy allocations.
 
 The codec checks size before transferring GPU tensors to CPU, and always
 creates a detached CPU copy. These limits suit small to moderate image/latent

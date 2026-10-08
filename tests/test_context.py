@@ -23,14 +23,18 @@ from workflowdirector.core import (
 
 
 class FakeCodec:
-    def copy_in(self, kind, value):
+    def estimate_size(self, kind, value):
         if kind == "STRING":
             if not isinstance(value, str):
                 raise ContextError("not a STRING")
-            return value, len(value.encode("utf-8"))
+            return len(value.encode("utf-8"))
         if not isinstance(value, dict) or not isinstance(value.get("data"), bytearray):
             raise ContextError("models are not allowed")
-        return copy.deepcopy(value), len(value["data"])
+        return len(value["data"])
+
+    def copy_in(self, kind, value):
+        size = self.estimate_size(kind, value)
+        return copy.deepcopy(value), size
 
     def copy_out(self, kind, value):
         return copy.deepcopy(value)
@@ -119,7 +123,7 @@ class ContextRegistryTests(unittest.TestCase):
         store.start_run("run")
         store.begin_step("run", "A", "job-A")
         store.stage("job-A", "a", "STRING", "123456")
-        with self.assertRaisesRegex(ContextError, "CPU RAM limit"):
+        with self.assertRaisesRegex(ContextError, "CPU RAM budget"):
             store.stage("job-A", "b", "STRING", "1234567")
         with self.assertRaisesRegex(ContextError, "per-entry"):
             store.stage("job-A", "c", "STRING", "z" * 13)
@@ -128,7 +132,7 @@ class ContextRegistryTests(unittest.TestCase):
         self.assertEqual(store.manifest(), {})
         store.end_run("run")
 
-    def test_replacing_multiple_existing_keys_uses_effective_budget(self):
+    def test_replacing_entries_accounts_for_coexisting_versions(self):
         store = registry(max_entry=12, max_total=12)
         store.start_run("run")
         store.begin_step("run", "A", "job-A")
@@ -136,12 +140,58 @@ class ContextRegistryTests(unittest.TestCase):
         store.stage("job-A", "y", "STRING", "789012")
         store.commit_step("job-A")
         store.begin_step("run", "B", "job-B")
-        store.stage("job-B", "x", "STRING", "1")
-        store.stage("job-B", "y", "STRING", "2")
-        self.assertEqual(store.commit_step("job-B"), ("x", "y"))
-        self.assertEqual(store.manifest()["x"]["bytes"], 1)
-        self.assertEqual(store.manifest()["y"]["bytes"], 1)
+        with self.assertRaisesRegex(ContextError, "coexist"):
+            store.stage("job-B", "x", "STRING", "1")
+        # Failed staging did not mutate previously committed values.
+        store.discard_step("job-B")
+        store.begin_step("run", "C", "job-C")
+        self.assertEqual(store.read("job-C", "x", "STRING"), "123456")
+        self.assertEqual(store.read("job-C", "y", "STRING"), "789012")
         store.end_run("run")
+
+    def test_preflight_rejects_before_copy_in(self):
+        class CountingCodec(FakeCodec):
+            def __init__(self):
+                self.copies = 0
+
+            def copy_in(self, kind, value):
+                self.copies += 1
+                return super().copy_in(kind, value)
+
+        codec = CountingCodec()
+        store = ContextRegistry(codec, max_entry_bytes=12, max_total_bytes=12)
+        store.start_run("run")
+        store.begin_step("run", "A", "job-A")
+        store.stage("job-A", "x", "STRING", "123456789012")
+        self.assertEqual(codec.copies, 1)
+        with self.assertRaisesRegex(ContextError, "budget"):
+            store.stage("job-A", "y", "STRING", "over")
+        self.assertEqual(codec.copies, 1)
+        store.end_run("run")
+
+    def test_abandoned_job_tombstone_blocks_late_native_write(self):
+        store = registry()
+        store.start_run("run")
+        store.begin_step("run", "A", "job-A")
+        store.stage("job-A", "x", "STRING", "partial")
+        # Simulate a timeout or uncertain native job, after the orchestrator
+        # disposed Context but the Comfy worker might still be executing.
+        store.end_run("run")
+        self.assertTrue(store.is_idle())
+        self.assertTrue(store.was_abandoned_job("job-A"))
+        self.assertFalse(store.was_abandoned_job("manual-job"))
+        with self.assertRaises(ContextError):
+            store.stage("job-A", "x", "STRING", "late")
+
+    def test_abandoned_jobs_remain_bounded(self):
+        store = registry()
+        for i in range(1050):
+            store.start_run(f"run-{i}")
+            store.begin_step(f"run-{i}", "A", f"job-{i}")
+            store.end_run(f"run-{i}")
+        self.assertFalse(store.was_abandoned_job("job-0"))
+        self.assertTrue(store.was_abandoned_job("job-1049"))
+        self.assertLessEqual(len(store._retired_job_ids), 1024)
 
     def test_key_validation_and_run_cleanup(self):
         store = registry()
