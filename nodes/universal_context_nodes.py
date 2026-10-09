@@ -19,6 +19,7 @@ class ContextPutUniversal(io.ComfyNode):
         return io.Schema(
             node_id="WorkflowDirectorContextPutUniversal",
             display_name="PUT INTO CONTEXT (Universal)",
+            is_experimental=True,
             category="Workflow Director/Context",
             description=(
                 "Publish safe CPU-copyable values to run-scoped Context. "
@@ -50,6 +51,7 @@ class ContextGetUniversal(io.ComfyNode):
         return io.Schema(
             node_id="WorkflowDirectorContextGetUniversal",
             display_name="GET FROM CONTEXT (Universal)",
+            is_experimental=True,
             category="Workflow Director/Context",
             description=(
                 "Read a previously committed Context key. Universal ANY output "
