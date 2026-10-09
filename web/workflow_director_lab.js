@@ -752,8 +752,7 @@ function renderPanel(root) {
     root.appendChild(warning);
   }
 
-  const run = state.lastRun;
-  if (!run) return;
+  const run = state.lastRun ?? { record: {} };
 
   const record = run.record ?? {};
   const status = document.createElement("div");
