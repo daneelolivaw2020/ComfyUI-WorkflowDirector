@@ -252,9 +252,13 @@ test("Run B only submits one fresh B workflow and never queues A", async () => {
 
 test("Run B only fails closed when B tab is closed", async () => {
   const e = makeEnvironment();
+  e.makeTab("temp/A", "A", "id-A", 31);
   e.makeTab("temp/B", "B", "id-B", 42);
+  await e.lab.capture("A");
+  e.select("temp/B");
   await e.lab.capture("B");
   e.tabs.delete("temp/B");
+  e.select("temp/A");
   await assert.rejects(
     () => e.lab.startRun([e.lab.state.B]),
     /closed or missing/
