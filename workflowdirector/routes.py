@@ -14,6 +14,7 @@ from .memory import memory_snapshot
 from .memory_analysis import summarize_run_memory
 from .run_api import RunRequestError, parse_run_request
 from .runtime import (
+    get_context_registry,
     BOUNDARY_MODE,
     effective_observation_window_seconds,
     get_director_service,
@@ -53,6 +54,17 @@ async def workflowdirector_health(_request):
 @PromptServer.instance.routes.get("/workflowdirector/memory")
 async def workflowdirector_memory(_request):
     return web.json_response(memory_snapshot())
+
+
+@PromptServer.instance.routes.get("/workflowdirector/context")
+async def workflowdirector_context_inspection(_request):
+    """Committed key inventory and bounded shapes; never return live values.
+
+    During a run, stage writes are intentionally not visible until COMMITTED.
+    After the Director run, the registry is empty; the Lab also keeps the
+    last-run metadata-only snapshot from /runs/{run_id}.
+    """
+    return web.json_response(get_context_registry().inspect())
 
 
 @PromptServer.instance.routes.post("/workflowdirector/runs")
