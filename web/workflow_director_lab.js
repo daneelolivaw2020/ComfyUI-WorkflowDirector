@@ -554,6 +554,13 @@ function renderPanel(root) {
   );
   captures.appendChild(
     button(
+      "Run B only",
+      () => startRun([state.B]),
+      !state.B || state.isRunning || state.monitoringUncertain
+    )
+  );
+  captures.appendChild(
+    button(
       "Run A → B",
       () => startRun([state.A, state.B]),
       !state.A || !state.B || state.isRunning || state.monitoringUncertain
@@ -567,6 +574,14 @@ function renderPanel(root) {
     )
   );
   root.appendChild(captures);
+
+  const standaloneNotice = document.createElement("div");
+  standaloneNotice.textContent =
+    "Run B only is an independent run. Context from a previous Director run " +
+    "is not retained; use Run A → B when B must GET values published by A.";
+  standaloneNotice.style.fontSize = "12px";
+  standaloneNotice.style.marginTop = "6px";
+  root.appendChild(standaloneNotice);
 
   const options = document.createElement("div");
   options.style.display = "flex";
