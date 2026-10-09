@@ -127,9 +127,9 @@ En este documento o una nueva bitácora enlazada, al terminar cada experimento a
 - [x] Investigar ProfilerX, Resource Monitor y herramientas PyTorch/Linux usando código fuente.
 - [x] Recibir versiones actuales del Colab: Py 3.13.15, torch 2.11.0+cu130, CUDA 13.0, 723 paquetes.
 - [x] Crear `scripts/memory_watch.py` observador externo de sólo lectura y tests.
-- [ ] CI del nuevo frente verificada para último commit (actualizar al finalizar).
-- [ ] Verificar Comfy vivo + frontend + flags en la próxima sesión de Colab.
-- [ ] Ejecutar baseline D1 con JSONL, sin plugins nuevos.
+- [x] CI del frente verificada para el commit de código inicial (Core tests, Python 3.11/3.13; los commits de documentación posteriores no validan Colab).
+- [x] Verificar Comfy vivo + flags (Comfy 0.39.0 / PID 16744 / --cache-none activo; versión de frontend pendiente de lectura independiente).
+- [x] Primera corrida baseline D1 A→B exitosa, sin plugins nuevos, con traza completa M-001 (524 muestras; análisis en [MEMORY_M001_TRACE_ANALYSIS_2026-10-08.md](MEMORY_M001_TRACE_ANALYSIS_2026-10-08.md)). **Falta repetición M-002 antes de concluir sobre retención.**
 - [ ] Instalar/probar ProfilerX en D2 y registrar versión pin.
 - [ ] Evaluar registro weakrefs/modelos y snapshots específicos.
 - [ ] Diseñar/remediar barrera doble (POST_A y PRE_B).
