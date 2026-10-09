@@ -210,6 +210,28 @@ class DirectorEngine:
                 )
                 return record
 
+            # Cleanup must NEVER erase/replace committed Context. The
+            # registry holds detached CPU copies, and we also verify its
+            # committed metadata survived the boundary before submitting B.
+            # This is a structural guard (not a tensor-content checksum).
+            if self._context is not None:
+                try:
+                    after_boundary = self._context.manifest()
+                    if after_boundary != record.context_manifest:
+                        record.fail(
+                            "CONTEXT_CHANGED_AT_BOUNDARY",
+                            "Committed Context keys/sizes changed during the "
+                            f"boundary after step {step.step_id}; refusing the "
+                            "next native job",
+                        )
+                        return record
+                except Exception as exc:
+                    record.fail(
+                        "CONTEXT_BOUNDARY_CHECK_FAILED",
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    return record
+
             record.event(
                 "boundary_completed",
                 step_id=step.step_id,
