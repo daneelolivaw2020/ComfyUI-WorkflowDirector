@@ -189,3 +189,18 @@ Salida de la celda `mark_m002` suministrada por el usuario; **no se aportaron a�
 - El usuario aún no confirmó explícitamente IDs de trabajos/estado terminal en M-002 (sí aportó las marcas POST).
 
 **Siguiente acción única:** obtener `PRE_AB_2`, min/max y actividad por fases de la traza completa M-002 y vincularla a la ejecución A/B antes de decidir M-003 vs D2 ProfilerX. Mantener Context pausado y evitar unload/destrucción.
+
+
+### M-002 — Análisis íntegro del ZIP, validado (248 muestras)
+
+**Fuente:** adjunto de conversación `M002_memory_AB.zip` con `M002_20261009_052124.jsonl` y `M002_20261009_052124_markers.jsonl`. Detalles íntegros: **[MEMORY_M002_TRACE_ANALYSIS_2026-10-08.md](MEMORY_M002_TRACE_ANALYSIS_2026-10-08.md)**.
+
+- **248 muestras** de 05:21:24.875Z a 05:30:05.934Z; cadencia mediana 2.088s, brecha máxima 2.338s; **PID Comfy 16744** en todas, mismo PID que M-001.
+- Marcadores: `PRE_AB_2` 05:21:29.741Z, `POST_AB_2` 05:27:52.938Z, `POST_AB_2_SETTLED` 05:28:52.939Z (las lecturas corresponden a `sample_utc` 0.7–1.4 segundos anteriores).
+- **PRE_AB_2:** RSS 2.829090 / PSS_Anon 2.311440 / PSS_File 0.488399 GiB; GPU global 189 MiB.
+- **POST_AB_2:** RSS 2.511574 / PSS_Anon 2.377937 / PSS_File 0.107427 GiB; GPU global 189 MiB, idéntico al SETTLED.
+- **Máximos muestreados M-002:** RSS 8.686127 GiB @05:26:29.031Z; PSS_Anon 7.214367 GiB @05:26:33.408Z; PSS_File 4.724025 GiB @05:23:58.411Z; GPU global 12125 MiB @05:24:45.510Z.
+- Bloques GPU >1000 MiB: 05:22:52–05:23:07 (pico 5373), 05:23:49–05:24:58 (pico 12125), 05:25:25–05:27:04 (pico 12029). **No equivalen automáticamente a número o frontera de jobs**.
+- **Reposo post actividad:** 88 muestras de 05:27:06.434Z a 05:30:05.934Z con RSS 2.511574 y PSS_Anon 2.377937 GiB constantes.
+- **Comparación finales de M-001 → M-002:** RSS -0.317516 GiB, PSS_Anon +0.066498 GiB (~68 MiB), PSS_File -0.380919 GiB, VRAM global 189→189 MiB. El RSS decreció gracias a menor residencia file-backed; el pequeño aumento de anónima permanece sin propietario identificado.
+- **Estado:** dos corridas en mismo PID, M-001 A y B reportados completados; M-002 finalización formal/IDs todavía no recibidos. No se demuestra fuga ni limpieza completa. **Siguiente prueba**: M-003 repetición idéntica en el mismo proceso para contrastar tendencia PSS_Anon, bajo preflight de recursos, antes de instalar ProfilerX.
