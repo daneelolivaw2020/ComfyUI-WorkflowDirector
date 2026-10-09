@@ -229,7 +229,7 @@ test("bad UUID acknowledgement is treated as ambiguous acceptance", async () => 
 });
 
 test("Run B only UI action is wired to exactly B and clearly warns about run-scoped Context", () => {
-  assert.match(source, /"Run B only",\\s*\\(\\) => startRun\\(\\[state\\.B\\]\\)/);
+  assert.match(source, /"Run B only",\s*\(\) => startRun\(\[state\.B\]\)/);
   assert.match(source, /Context from a previous Director run/);
 });
 
