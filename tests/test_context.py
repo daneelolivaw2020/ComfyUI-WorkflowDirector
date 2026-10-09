@@ -300,6 +300,28 @@ class StaticContextPlanTests(unittest.TestCase):
                 }]
             })
 
+    def test_cleanup_C_rejects_context_access_nodes_in_preflight(self):
+        for bad_class in (
+            "WorkflowDirectorContextPutUniversal",
+            "WorkflowDirectorContextGetUniversal",
+            "WorkflowDirectorContextPutString",
+        ):
+            with self.subTest(bad_class=bad_class):
+                with self.assertRaisesRegex(
+                    RunRequestError, "Cleanup must not contain Context nodes"
+                ):
+                    parse_run_request({
+                        "steps": [{
+                            "step_id": "C", "workflow_id": "wf-C",
+                            "prompt": {
+                                "1": {"class_type": bad_class, "inputs": {
+                                    "key": "demo", "value": "x",
+                                }},
+                            },
+                            "workflow": {},
+                        }]
+                    })
+
     def test_distinct_literal_writers_are_allowed(self):
         prompt = {
             "1": {
@@ -334,8 +356,9 @@ class NativeJobAdapterWithContext:
         self.submitted.append(prompt_id)
         if prompt["node"]["class_type"] == "A":
             self.store.stage(prompt_id, "shared", "STRING", "from-A")
-        else:
+        elif prompt["node"]["class_type"] == "B":
             self.b_read_value = self.store.read(prompt_id, "shared", "STRING")
+        # C is deliberately a cleanup-only native job, without Context access.
         return prompt_id
 
     async def get_job_state(self, prompt_id):
@@ -374,6 +397,33 @@ class ContextLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(ContextError):
             store.manifest()
+
+    async def test_explicit_cleanup_C_preserves_committed_A_for_B(self):
+        store = registry()
+        adapter = NativeJobAdapterWithContext(store)
+        p = RunPlan(
+            run_id=str(uuid.uuid4()),
+            steps=(
+                PreparedStep("A", "wf-A", "A", {"node": {"class_type": "A"}}),
+                PreparedStep("C", "wf-C", "Cleanup", {"node": {"class_type": "C"}}),
+                PreparedStep("B", "wf-B", "B", {"node": {"class_type": "B"}}),
+            ),
+        )
+        engine = DirectorEngine(adapter, context=store)
+        service = DirectorRunService(engine, context=store)
+        await service.start(p)
+        record = await service.wait(p.run_id)
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(adapter.b_read_value, "from-A")
+        self.assertEqual(len(adapter.submitted), 3)
+        self.assertEqual(
+            record.context_manifest,
+            {"shared": {"type": "STRING", "bytes": 6}},
+        )
+        self.assertEqual(
+            [e.step_id for e in record.events if e.kind == "context_committed"],
+            ["A", "C", "B"],
+        )
 
     async def test_garbage_collecting_boundary_preserves_context_and_B_runs(self):
         import gc
