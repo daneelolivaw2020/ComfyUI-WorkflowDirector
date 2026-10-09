@@ -38,3 +38,14 @@ Status: **experimental; implemented on `feature/universal-context-nodes`, not ac
 6. If any cleanup node crashes or refuses to run standalone, stop using the C button and return to A→B; the default path never uses C. Report the native error or crash details instead of retrying destructive cleanup blindly.
 
 **The C JSON was assembled using the same node names and boolean settings present in prior user-provided real A/B workflows. Its standalone scheduling remains unverified in the user's active Comfy environment.**
+
+## Real Colab report: UI output restoration and A→Cleanup→B — 2026-10-09
+
+**User-observed integrated acceptance (not an automated benchmark; no raw native logs or memory measurements supplied):**
+
+- A→B with an IMAGE Context payload now **shows the image in B's PreviewImage** and produces **Get Image Size output** visible in the UI. Previously the same results existed in native history but the frontend displays remained empty. This supports successful behavior of the newly implemented history-based UI restoration in this Colab session; the exact underlying event-race cause remains an inference, not a proven diagnosis.
+- The optional **A→Cleanup→B** path also appeared to execute correctly. The user changed the source image and reported that B recovered it after the cleanup stage, **without losing Context**.
+- Thus the key product path is accepted functionally for this IMAGE scenario: A commits → optional separate native cleanup C → B gets Context. This **does not** demonstrate that cleanup returns RAM/VRAM to a baseline, unloads every model, or works with every third-party cleanup node or large-model workflow.
+- Continue to keep the experimental branch separate from the accepted baseline until real memory/cleanup stability has been assessed. Avoid changing the successful universal PUT/GET transport just to chase a visual-only issue already resolved in this scenario.
+
+**Remaining work:** evaluate true GPU/RAM residuals and stability across repeated heavy A→C→B cycles (with the user's already-working cleanup nodes), polish Context key picker / explorer on a real frontend, and provide explicit diagnostics when native cleanup crashes or conflicts with other jobs.
