@@ -375,6 +375,50 @@ class ContextLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ContextError):
             store.manifest()
 
+    async def test_garbage_collecting_boundary_preserves_context_and_B_runs(self):
+        import gc
+        store = registry()
+        adapter = NativeJobAdapterWithContext(store)
+
+        class GarbageCollectBoundary:
+            async def observe(self, *, step, job_id):
+                gc.collect()
+                return ()
+
+        p = plan()
+        engine = DirectorEngine(
+            adapter, context=store,
+            boundary_observer=GarbageCollectBoundary(),
+        )
+        service = DirectorRunService(engine, context=store)
+        await service.start(p)
+        record = await service.wait(p.run_id)
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(adapter.b_read_value, "from-A")
+        self.assertEqual(len(adapter.submitted), 2)
+
+    async def test_corrupting_boundary_stops_before_B(self):
+        store = registry()
+        adapter = NativeJobAdapterWithContext(store)
+
+        class DestructiveBoundary:
+            async def observe(self, *, step, job_id):
+                # Simulate a buggy future cleanup integration, NOT normal GC.
+                store._session.values.clear()
+                return ()
+
+        p = plan()
+        engine = DirectorEngine(
+            adapter, context=store,
+            boundary_observer=DestructiveBoundary(),
+        )
+        service = DirectorRunService(engine, context=store)
+        await service.start(p)
+        record = await service.wait(p.run_id)
+        self.assertEqual(record.phase, RunPhase.FAILED)
+        self.assertEqual(record.failure_code, "CONTEXT_CHANGED_AT_BOUNDARY")
+        self.assertEqual(len(adapter.submitted), 1, "B must never start")
+
     async def test_failed_A_never_submits_B_or_commits_context(self):
         store = registry()
         adapter = NativeJobAdapterWithContext(store)
