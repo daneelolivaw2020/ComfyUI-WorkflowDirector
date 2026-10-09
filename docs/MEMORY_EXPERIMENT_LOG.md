@@ -154,3 +154,16 @@ Resultados adicionales a las muestras puntuales anteriores:
 - Pico de file-backed PSS 5.475 GiB transitorio, distinto en tiempo del pico anónimo 7.138 GiB. Residuo final respecto al baseline: PSS_Anon +1.592 GiB, PSS_File -0.024 GiB. Memoria anónima retenida, **causa no atribuida, NO denominar fuga**.
 - Ambos trabajos reportados completados correctamente. Faltan prompt/run IDs y tiempos exactos; no está probada ninguna hipótesis H1–H5.
 - **Próxima prueba M-002:** verificar cgroup RAM disponible y proceso idle; repetir A→B sin reinicio ni cambios, con marcas adicionales y tiempos IDs; comprobar si el estado POST_AB vuelve ~2.829 GiB RSS / 2.311 GiB PSS_Anon o sigue aumentando. No instalar ProfilerX antes de segunda baseline.
+
+
+### M-002 — preflight para repetición A→B, aún SIN ejecutar (2026-10-08 ~23:19 CDMX)
+
+Salida reportada del Colab del usuario:
+- `/proc/meminfo`: `MemTotal = 12.67 GiB`, `MemAvailable = 8.78 GiB`.
+- `/sys/fs/cgroup/memory.current = 0.47 GiB` y `memory.max = max`; no usar esta cifra como representación válida del proceso Comfy dado que contradice el RSS anterior (~2.829 GiB). Falta identificar el cgroup correspondiente al PID Comfy.
+- `GET /workflowdirector/health`: `ready=True`, `active_run_id=None` (idle).
+- `WATCH_PROC` activo al verificar; archivo previo `/content/memory_20261009_045123.jsonl`; monitor anterior tiene límite de 1800 s y puede expirar durante una segunda corrida.
+- Comando `nvidia-smi` devolvió `returncode=0`, pero el usuario **no mostró sus valores** en la salida; VRAM actual no confirmada en este preflight.
+- No se han realizado nuevos unloads, instalaciones ni reinicios en este reporte.
+
+**Decisión:** conservar el log original; iniciar una nueva captura externa M-002 antes del trabajo, verificar VRAM/health y memoria disponible de nuevo justo antes de A/B; si las condiciones cambian, no ejecutar. Marcar PRE_AB_2 / POST_AB_2 / POST_AB_2_SETTLED, usar los workflows originales sin modificación y anotar IDs nativos. Este registro es preparación, NO un resultado de M-002.
