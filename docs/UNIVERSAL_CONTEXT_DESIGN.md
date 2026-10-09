@@ -83,17 +83,26 @@ pickle, scratch spill or checkpoint is introduced.
 1. CI: typed regression suite still passes; new tests for nested CONDITIONING,
    deep cloning, early rejection before CPU transfer, no model references,
    cycles, byte budgets and static duplicate writers.
-2. Colab v0.39.0, T4, `--cache-none`: verify eight Context nodes registered
-   (six legacy + two universal) and existing four acceptance cases stay green.
-3. Two topbar workflows: A with a native producer → universal PUT key
-   `test.value`; B with universal GET `test.value` → suitable consumer;
-   confirm native B output, two completed jobs and manifest type VALUE.
-   Start with STRING via a STRING-producing upstream node, then IMAGE/MASK.
-4. CONDITIONING producer (without ControlNet/hook objects) → universal PUT;
-   consumer in B → compatible sampler: actual execution and output required.
-5. Negative: model-coupled conditioner rejected and B never submitted;
+2. Colab v0.39.0, T4, `--cache-none`: verify eight Context nodes
+   registered (six legacy + two universal), and two additional Lab
+   CONDITIONING fixtures. Keep the existing four cases green.
+3. Run `python scripts/acceptance_probe.py --case universal_image`.
+   A creates a 96×64 image via native EmptyImage and Universal PUT.
+   B runs Universal GET→SaveImage. Confirm two distinct native completed
+   jobs, manifest `accept.universal: VALUE` and B's image in history.
+4. Run `python scripts/acceptance_probe.py --case universal_conditioning`.
+   A creates an actual Comfy CONDITIONING (embedding tensor + pooled_output +
+   scalar/list metadata) with our **Lab-only** no-model fixture. B reads
+   through Universal GET into a V3 CONDITIONING input and verifies embedding
+   values, pooled tensor, metadata and a fresh per-run sentinel. B fails if
+   any integrity check is wrong. Confirm the B history output includes
+   `PASS_CONDITIONING_TRANSFER_`.
+5. Test a real CLIPTextEncode→Universal PUT conditioner, then Universal
+   GET→a compatible sampler in B. The no-model fixture does not replace
+   real CLIP/Klein model acceptance.
+6. Negative: model-coupled conditioner rejected and B never submitted;
    failing A must not commit; close B tab and confirm zero jobs.
-6. Heavy A Klein Q4 → B Klein Q6, with memory measurements and correct
+7. Heavy A Klein Q4 → B Klein Q6, with memory measurements and correct
    outputs; inspect RSS/PSS/VRAM after each job. No claims of GPU peak
    telemetry or generic unload behavior.
 
