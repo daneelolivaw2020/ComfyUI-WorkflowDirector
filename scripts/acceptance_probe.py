@@ -269,6 +269,41 @@ def history_evidence(job_id, expected_fragment):
     }
 
 
+def expected_failure_evidence(job_id, *, node_type, message_fragment):
+    """Prove a negative gate failed for the intended reason, not a setup bug.
+
+    In native Comfy 0.39, /history/{job_id}.status.messages includes
+    ["execution_error", {"node_type": ..., "exception_message": ...}].
+    Missing/ambiguous history is NOT a successful negative acceptance.
+    """
+    try:
+        history = api("/history/" + job_id, timeout=10)
+    except Exception as exc:
+        return {"confirmed": False, "detail": str(exc)}
+    entry = history.get(job_id) if isinstance(history, dict) else None
+    status = entry.get("status") if isinstance(entry, dict) else None
+    messages = status.get("messages") if isinstance(status, dict) else None
+    if not isinstance(messages, list):
+        return {"confirmed": False, "detail": "Native job history has no status messages"}
+    for message in messages:
+        if not isinstance(message, (list, tuple)) or len(message) < 2:
+            continue
+        event, payload = message[0], message[1]
+        if event != "execution_error" or not isinstance(payload, dict):
+            continue
+        if (payload.get("node_type") == node_type
+                and message_fragment in str(payload.get("exception_message", ""))):
+            return {
+                "confirmed": True,
+                "node_type": node_type,
+                "message_fragment": message_fragment,
+            }
+    return {
+        "confirmed": False,
+        "detail": "Expected exception not found for requested node in native job history",
+    }
+
+
 def last_step_rss(status):
     """Last step's final RSS, or None if the step has no memory observations."""
     steps = (status.get("memory_summary") or {}).get("steps") or []
@@ -339,6 +374,23 @@ def run_case(case, *, max_seconds=120):
         or bool(evidence and evidence.get("job_present")
                 and evidence.get("expected_fragment_found"))
     )
+    failure_evidence = None
+    if expected_failed and len(attempts) == 1:
+        if case == "universal_unsafe_conditioning":
+            failure_evidence = expected_failure_evidence(
+                attempts[0]["job_id"],
+                node_type="WorkflowDirectorContextPutUniversal",
+                message_fragment="Universal Context cannot safely retain",
+            )
+        else:
+            failure_evidence = expected_failure_evidence(
+                attempts[0]["job_id"],
+                node_type="WorkflowDirectorContextGetString",
+                message_fragment="has not been committed",
+            )
+    expected_failure_confirmed = (
+        not expected_failed or bool(failure_evidence and failure_evidence.get("confirmed"))
+    )
 
     data = {
         "case": case, "run_id": rid, "phase": phase,
@@ -350,7 +402,9 @@ def run_case(case, *, max_seconds=120):
         } for a in attempts],
         "context_manifest": manifest,
         "history_evidence": evidence,
-        "success": good_phase and good_attempts and context_ok and conditioning_integrity_ok,
+        "failure_evidence": failure_evidence,
+        "success": (good_phase and good_attempts and context_ok
+                    and conditioning_integrity_ok and expected_failure_confirmed),
         "end_rss_gib": last_step_rss(status),
     }
     previous = []
