@@ -22,11 +22,12 @@ class ContextNotFound(ContextError):
     """The requested committed Context key does not exist."""
 
 
-VALID_TYPES = frozenset(("STRING", "IMAGE", "LATENT"))
+VALID_TYPES = frozenset(("STRING", "IMAGE", "LATENT", "VALUE"))
 _CONTEXT_PUT_NODES = frozenset((
     "WorkflowDirectorContextPutString",
     "WorkflowDirectorContextPutImage",
     "WorkflowDirectorContextPutLatent",
+    "WorkflowDirectorContextPutUniversal",
 ))
 
 
@@ -68,7 +69,7 @@ def validate_key(key: str) -> str:
 def validate_type(kind: str) -> str:
     if kind not in VALID_TYPES:
         raise ContextError(
-            f"Unsupported Context type {kind!r}; only STRING, IMAGE, LATENT are allowed. "
+            f"Unsupported Context type {kind!r}; only STRING, IMAGE, LATENT, VALUE are allowed. "
             "MODEL, CLIP, VAE and other live model objects are forbidden."
         )
     return kind
@@ -233,6 +234,23 @@ class ContextRegistry:
                 )
             # A caller must not mutate the committed value.
             return self._codec.copy_out(kind, entry.value)
+
+    def read_any(self, job_id: str, key: str) -> Any:
+        """Read a committed entry regardless of its legacy or universal kind.
+
+        Returned data is always independently cloned by the trusted codec.
+        The consumer still must be compatible with the actual runtime value.
+        """
+        key = validate_key(key)
+        with self._lock:
+            self._require_patch(job_id)
+            session = self._require_session()
+            entry = session.values.get(key)
+            if entry is None:
+                raise ContextNotFound(
+                    f"Context key {key!r} has not been committed by an earlier step"
+                )
+            return self._codec.copy_out(entry.kind, entry.value)
 
     def commit_step(self, job_id: str) -> tuple[str, ...]:
         """Publish the entire patch only after terminal native Job COMPLETED."""
