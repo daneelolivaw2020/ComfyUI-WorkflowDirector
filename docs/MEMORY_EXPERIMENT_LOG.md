@@ -66,3 +66,13 @@
 **Cambios hechos en Colab:** ninguno por el asistente. **ProfilerX:** no instalado por este procedimiento.
 
 **Siguiente acción única:** iniciar el observador externo read-only `scripts/memory_watch.py` desde el checkout `feature/memory-diagnostics`, registrar idle y luego A Klein Q4 → B Klein Q6 manteniendo parámetros, IDs y fronteras POST_A/PRE_B. No hacer unload ni reinstalar Torch/CUDA.
+
+
+### M-001 — Inicio del observador externo D1 (evidencia Colab enviada por el usuario)
+- Revisión utilizada del auditor: `4917217d31ffa4c06154adc7d0c771fe41ce11ee`, carpeta `/content/WorkflowDirector-Memory-Audit`.
+- PID de observador externo: `17492`; proceso Comfy observado: PID `16744`; estado reportado: `ACTIVO`.
+- JSONL temporal: `/content/memory_20261009_045123.jsonl`. El usuario no ha exportado todavía el archivo.
+- Muestras `2026-10-09T04:51:23.648159+00:00`, `04:51:25.687981`, `04:51:27.741035`, `04:51:29.779940`: Comfy RSS redondeado por el watcher a `1.26 GiB` en las cuatro; GPU global `110100480 bytes` usados (=105 MiB), `16106127360 bytes` totales (=15360 MiB).
+- La salida abreviada del watcher no contiene PSS/Pss_Anon/Pss_File; deben extraerse del JSONL antes de atribuir memoria. Baseline de pocos segundos no demuestra ausencia de retención.
+- **Pendiente:** ejecutar A Klein Q4 y B Klein Q6 sin plugins adicionales y correlacionar timestamps/IDs con el JSONL. No se observan ejecuciones A/B en estos datos.
+
