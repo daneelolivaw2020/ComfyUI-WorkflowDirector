@@ -211,6 +211,17 @@ def history_evidence(job_id, expected_fragment):
     }
 
 
+def last_step_rss(status):
+    """Last step's final RSS, or None if the step has no memory observations."""
+    steps = (status.get("memory_summary") or {}).get("steps") or []
+    if not steps:
+        return None
+    observations = steps[-1].get("observations") or []
+    if not observations:
+        return None
+    return observations[-1].get("metrics", {}).get("process_rss_gib", {}).get("current")
+
+
 def run_case(case, *, max_seconds=120):
     # The run service exclusively owns jobs; never submit around an active run.
     preflight()
@@ -265,11 +276,7 @@ def run_case(case, *, max_seconds=120):
         "context_manifest": manifest,
         "history_evidence": evidence,
         "success": good_phase and good_attempts and context_ok,
-        "end_rss_gib": (
-            (status.get("memory_summary") or {}).get("steps", [{}])[-1]
-            .get("observations", [{}])[-1].get("metrics", {})
-            .get("process_rss_gib", {}).get("current")
-        ) if status.get("memory_summary", {}).get("steps") else None,
+        "end_rss_gib": last_step_rss(status),
     }
     previous = []
     if REPORT.exists():
