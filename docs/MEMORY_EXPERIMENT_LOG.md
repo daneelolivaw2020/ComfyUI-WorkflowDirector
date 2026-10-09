@@ -511,3 +511,20 @@ Recibido `M009_SMAPS_EVIDENCE.zip` del usuario; ZIP válido (`testzip = PASS`) y
 La integridad del ZIP y concordancia numérica están confirmadas. **No se han subido adjuntos binarios al repositorio**, pero se documentan nombres y hashes para trazabilidad y el usuario conserva las evidencias.
 
 **Próximo experimento propuesto:** `M009_PRE_A2` (same PID, idle) → ejecutar una sola vez `Run A only` en WorkflowDirector Lab con **workflow A exacto original sin cambiar el tipo CLIP `stable_diffusion`**, puesto que el propósito es medir retención al repetir la misma carga; **NO** usar variante corregida `flux2` para este test. Guardar `M009_POST_A2` inmediato y settled +60s, mismas métricas `/workflowdirector/memory` y `/workflowdirector/memory/glibc`, cero unload/malloc_trim/restart. Comparar POST_B_SETTLED, PRE_A2 y POST_A2_SETTLED. Interpretar sólo delta residual; si muestra crecimiento adicional, no asignar automáticamente leak. Validar que workflow A en Lab coincide con JSON conservado; si difiere abortar y precisar.
+
+
+### M-009 — Segunda ejecución A (A2) desde WorkflowDirector Lab: aumento residual +76 MiB, pero glibc central freelists absorben casi todo el crecimiento de arenas (2026-10-09)
+Usuario informó mediciones `M009_PRE_A2`, `M009_POST_A2` y `M009_POST_A2_SETTLED`. Mismo PID **6177**, `--cache-none`, sin descargas manuales ni reinicio; el usuario afirma correr `Run A only` por segunda vez, con workflow A original (Q4 y CLIP type stable_diffusion). Datos de stdout, los 3 JSON se conservan temporalmente en `/content` y aún **no han sido adjuntados**.
+
+| Métrica | PRE_A2 | POST_A2 | POST_A2_SETTLED | Δ PRE→settled |
+|---|---:|---:|---:|---:|
+| PSS_Anon GiB | 1.5716 | 1.6459 | 1.6459 | **+0.0743 GiB (~76.08 MiB)** |
+| `heap_entries` | 16 | 16 | 16 | 0 |
+| `arena_system_current` MiB | 1216.41 | 1266.70 | 1266.70 | **+50.29 MiB** |
+| `free_list_estimate` MiB | 68.60 | 118.84 | 118.84 | **+50.24 MiB** |
+| model manager loaded entries | 0 | 0 | 0 | 0 |
+| system MemAvailable GiB | — | — | 9.4513 | — |
+
+`POST_A2` y settled a +60s idénticos a la precisión del reporte. Diferencia de deltas `Δarena_system_current - Δfreelists≈0.05MiB`, sugiere que casi todo el aumento de espacio de arenas terminó clasificado en free lists de glibc; **NO significa bytes físicos recuperables de forma segura**. PSS_Anon +76MiB es un contador residente del proceso, mientras `arena_system_current` es virtual/allocator; no pueden restarse para atribuir 26MiB a otras librerías. Hay nuevos 50MiB de chunks centrales libres según malloc_info, pero no prueba de `malloc_trim()` seguro ni de reclamabilidad de esos 50MiB en RSS.
+
+**Secuencia post-workflow PSS_Anon:** COLD 0.7447 GiB → A1 1.5568 GiB → B1 1.5716 GiB → A2 1.6459 GiB. Deltas +831.59MiB, +15.16MiB, +76.08MiB. **No alegar meseta demostrada** ni fuga lineal: evidencia compatible con calentamiento gradual pero falta repetición homogénea suficiente. La decisión recomendada es primero preservar el nuevo conjunto `M009_PRE_A2.json`, `M009_POST_A2.json`, `M009_POST_A2_SETTLED.json` junto a evidencia existente; luego si hay tiempo/capacidad, considerar una A3 idéntica con mismas pre/post 60s para evaluar si delta converge a 0 o aumenta sistemáticamente. No ejecutar A3 antes de guardar A2, no realizar `/free`/unload/`malloc_trim`, no tocar PR Context #6.
