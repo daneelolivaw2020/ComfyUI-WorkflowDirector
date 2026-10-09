@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 path = Path(__file__).resolve().parents[1] / "scripts" / "acceptance_probe.py"
 spec = importlib.util.spec_from_file_location("wd_acceptance_probe", path)
@@ -48,6 +49,49 @@ class AcceptancePlansTests(unittest.TestCase):
         self.assertEqual(a["2"]["inputs"]["value"], ["1", 0])
         self.assertEqual(b["2"]["class_type"], "SaveLatent")
         self.assertTrue(prefix.startswith("WD_Acceptance_LATENT_"))
+
+    def test_negative_acceptance_requires_exact_native_error(self):
+        job_id = "abcd-123"
+        def simulated_history(path, timeout=10):
+            self.assertEqual(path, "/history/" + job_id)
+            return {job_id: {
+                "status": {
+                    "status_str": "error",
+                    "messages": [[
+                        "execution_error",
+                        {
+                            "node_type": "WorkflowDirectorContextPutUniversal",
+                            "exception_message": (
+                                "Universal Context cannot safely retain a control object"
+                            ),
+                        },
+                    ]],
+                }
+            }}
+        with patch.object(probe, "api", simulated_history):
+            expected = probe.expected_failure_evidence(
+                job_id, node_type="WorkflowDirectorContextPutUniversal",
+                message_fragment="Universal Context cannot safely retain",
+            )
+            self.assertTrue(expected["confirmed"])
+            incorrect = probe.expected_failure_evidence(
+                job_id, node_type="WorkflowDirectorContextPutUniversal",
+                message_fragment="has not been committed",
+            )
+            self.assertFalse(incorrect["confirmed"])
+            wrong_node = probe.expected_failure_evidence(
+                job_id, node_type="WorkflowDirectorContextGetString",
+                message_fragment="Universal Context cannot safely retain",
+            )
+            self.assertFalse(wrong_node["confirmed"])
+
+    def test_negative_acceptance_missing_history_is_not_pass(self):
+        with patch.object(probe, "api", return_value={}):
+            result = probe.expected_failure_evidence(
+                "missing", node_type="WorkflowDirectorContextPutUniversal",
+                message_fragment="Universal Context cannot safely retain",
+            )
+            self.assertFalse(result["confirmed"])
 
     def test_last_step_rss_handles_failure_without_observations(self):
         self.assertIsNone(probe.last_step_rss({}))
