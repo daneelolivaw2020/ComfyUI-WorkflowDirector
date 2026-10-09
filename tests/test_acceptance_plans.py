@@ -12,7 +12,7 @@ spec.loader.exec_module(probe)
 
 class AcceptancePlansTests(unittest.TestCase):
     def test_all_plans_use_two_distinct_jobs_and_workflow_ids(self):
-        for case in ("string", "image", "latent", "failure", "universal_image", "universal_conditioning"):
+        for case in ("string", "image", "latent", "failure", "universal_image", "universal_conditioning", "universal_unsafe_conditioning"):
             with self.subTest(case=case):
                 steps, expected = probe.plans(case)
                 self.assertEqual(len(steps), 2)
@@ -85,6 +85,19 @@ class AcceptancePlansTests(unittest.TestCase):
         self.assertEqual(b["2"]["inputs"]["conditioning"], ["1", 0])
         self.assertIn(b["2"]["inputs"]["expected_label"], sentinel)
         self.assertNotIn("WorkflowDirectorTestConditioningSource", str(b))
+
+    def test_universal_unsafe_conditioning_aborts_before_B(self):
+        steps, meta = probe.plans("universal_unsafe_conditioning")
+        self.assertEqual(meta, (None, None, None))
+        a, b = [s["prompt"] for s in steps]
+        self.assertEqual(
+            a["1"]["class_type"], "WorkflowDirectorTestConditioningUnsafeSource"
+        )
+        self.assertEqual(
+            a["2"]["class_type"], "WorkflowDirectorContextPutUniversal"
+        )
+        self.assertEqual(a["2"]["inputs"]["value"], ["1", 0])
+        self.assertEqual(b["1"]["inputs"]["key"], "must.not.run")
 
     def test_failure_plan_only_validated_when_a_fails(self):
         steps, meta = probe.plans("failure")
