@@ -375,5 +375,5 @@ test("do not apply B image outputs to A when followActive is disabled", async ()
     ] },
   });
   assert.equal(e.active(), "temp/A");
-  assert.equal(e.app.nodeOutputs["3"], undefined);
+  assert.equal(e.app.nodeOutputs?.["3"], undefined);
 });
