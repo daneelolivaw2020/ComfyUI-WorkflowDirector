@@ -439,3 +439,26 @@ El usuario adjuntó ZIP **M009_AFTER_A_EVIDENCE.zip** (2,823 bytes comprimidos),
 - Momento de inspección de modelos posterior a asentamiento; `MemAvailable=9.5174 GiB`, consistente con 9.5246 previo y fluctuación normal del sistema.
 - **Interpretación:** comportamiento asignación residente mucho mayor que freelists visibles glibc; es plausible que haya gran cantidad de bloques que glibc registra como "en uso" (incluyendo asignaciones mantenidas por nodos de modelos, bibliotecas, tcache y/o otros pools), no grandes freelists libres. No confundir listado de loaded_models vacío con ausencia total de memoria del modelo.
 - **Próximo discriminante sin cambiar código:** guardar el workflow B recreado, mantener mismo PID y `--cache-none`, ejecutar B sólo una vez, y repetir lectura `malloc_info` + smaps inmediata/asentada comparando COLD, POST_A, POST_B; opcional captura read-only de mapa /proc por tipo antes de B si se necesita atribución a glibc. Ninguna acción de unload/trim/ProfilerX todavía.
+
+
+### M-009 — POST_B y POST_B_SETTLED tras B por UI Comfy nativa (2026-10-09 UTC)
+
+**Nuevo resultado aportado por el usuario**, B ejecutado en la UI normal ComfyUI (no mediante WorkflowDirector Lab) en la misma cohorte; contexto del mismo PID **6177** según prechecks de `snapshot()`. Post y settled separados por 60 s, con `active_run_id=None`, cola nativa vacía, cero modelos registrados. El usuario aún no ha adjuntado el ZIP POST_B ni los IDs/JSON de B; no asignar un nombre/semilla al modelo ni comprobar ejecución independiente más allá del reporte.
+
+| Métrica | COLD antes de A | POST_A asentado | PRE_B | POST_B inmediato | POST_B asentado |
+|---|---:|---:|---:|---:|---:|
+| PSS_Anon GiB | 0.7447 | 1.5568 | 1.5568 | 1.5716 | 1.5716 |
+| Entradas loaded_models | — | 0 | 0 | 0 | 0 |
+| glibc heap entries | 16 | 16 | 16 | 16 | 16 |
+| glibc arena system current MiB | 300.61 | 1206.41 | 1207.97 | 1212.78 | 1214.61 |
+| glibc libre fast+rest MiB | 16.28 | 58.72 | 60.26 | 65.00 | 66.81 |
+| System MemAvailable GiB | 10.3184 | 9.5246 | no reportado | no reportado | 9.4835 |
+
+**Dif. POST_A → POST_B settled:**
+- PSS_Anon **+0.0148 GiB ≈ +15.16 MiB** (vs COLD→A +0.8121GiB ≈831.6MiB).
+- Arena system current **+8.20 MiB**; glibc free fast/rest **+8.09 MiB**. Su diferencia "system current minus visible freelist" **+~0.11 MiB**. Comparación más estricta PRE_B→POST_B: arenas +6.64 MiB, libres +6.55 MiB, diferencia +0.09 MiB. Estos son contadores de glibc *virtuales/allocator*, no equivalen a memoria física libreable o objetos vivos. Tcache y allocaciones nativas fuera de glibc están incompletamente representados.
+- MemAvailable POST_A→POST_B **-0.0411 GiB (~42 MiB)**; no atribuir toda variación a Comfy, porque es estadística global.
+- Observación compatible con **reutilización sustancial de arenas preexistentes durante B**, no crecimiento residual acumulativo grande por workflow en este ejemplo. No es prueba de plateau universal ni de que B fuese una carga idéntica al workflow B histórico M001–3.
+- Cero modelos en manager al final de B no demuestra inexistencia de referencias CPU retenidas en extensiones, GGUF u otros caches.
+
+**Decisión:** preservar evidencia exacta `M009_PRE_B.json`, `M009_POST_B.json`, `M009_POST_B_SETTLED.json`, ambos workflows JSON si disponibles, y los cuatro JSON del ZIP posterior a A, descargándolos antes de que expire la sesión. No ejecutar `malloc_trim`, /free, unload ni otra corrida ciega. Próximo experimento debe discriminar la naturaleza de los ~832 MiB residuales tras primer A (arranque frío vs calentamiento y asignaciones vivas), preferentemente trazas/diagnóstico del allocator y nodos en una cohorte controlada, no prometer que todo se puede liberar. Mantener la distinción: B ejecutado vía Comfy nativo prueba reutilización del mismo proceso, **NO** valida frontera de WorkflowDirector Lab A→B.
