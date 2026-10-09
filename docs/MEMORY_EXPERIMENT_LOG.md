@@ -223,3 +223,18 @@ Datos reportados por el usuario, mismo PID previsto 16744 sin reinicio, monitor 
 **Corrección del criterio:** la estimación simplificada de margen de ~2.5 GiB (MemAvailable menos variación previa de RSS) no constituye umbral anti-OOM validado; no utilizarla como garantía. MemAvailable de Linux es una estimación de memoria disponible incluyendo caché recuperable y no identifica propietarios. La diferencia total−available es ~4.00 GiB, que incluye tanto procesos como memoria no inmediatamente recuperable. El salto de Comfy PSS_Anon desde M-001 BASELINE 0.719 hasta PRE_AB_3 2.378 GiB es de ~1.659 GiB **cuya función/propiedad no se ha atribuido**, no se puede declarar desperdicio ni necesariamente liberable.
 
 **Siguiente única acción:** captura de solo lectura de `free -h`, campos explicativos de `/proc/meminfo`, `/proc/16744/status` y principales procesos por RSS (sin argumentos potencialmente sensibles). Verificar cgroups del notebook y del proceso Comfy por separado, sin modificar runtime, caches, Torch o CUDA. Luego reevaluar si conviene ProfilerX/atribución CPU o nueva carga. Si la corrida M-003 ya fue arrancada, dejarla terminar sin unload y documentar post antes de más acciones.
+
+
+### M-003 — diagnóstico de alto consumo mientras/justo después de A→B: momento NO alineado (2026-10-09 UTC)
+
+El usuario informa que la secuencia A–B **ya terminó** y muestra una celda de auditoría de RAM ejecutada alrededor del término del trabajo, pero sin timestamp/orden suficientemente precisos para clasificar la medición como POST_AB_3 estabilizada.
+
+**Valores de la auditoría puntual**:
+- MemTotal **12.671 GiB**, MemFree **0.145 GiB**, MemAvailable **3.830 GiB**.
+- Cached **3.719 GiB**, Buffers **0.055 GiB**, AnonPages **8.173 GiB**, Mapped **1.773 GiB**, Shmem **0.020 GiB**, Slab **0.303 GiB** (SReclaimable 0.242 GiB).
+- `ps -eo pid,ppid,rss,comm --sort=-rss`: proceso ComfyUI PID **16744** RSS **9259768 KiB** (~8.83 GiB); siguiente mayor proceso `node` PID 12086 RSS 388460 KiB; `jupyter-server` PID123 RSS147188 KiB; notebook Python PID800 RSS112116 KiB.
+- `/proc/16744/status`: VmRSS 9260152 KiB (~8.83 GiB), RssAnon 7567824 KiB (~7.22 GiB), RssFile 1677988 KiB (~1.60 GiB), RssShmem 14340 KiB (~0.014 GiB), VmSwap 0 KiB; VmSize ~57.6 GiB virtual no equivale a RAM física.
+- Las rutas `/proc/self/cgroup` del notebook y `/proc/16744/cgroup` indican ambas `0::/../../jupyter-children`, por lo que la cifra anterior leída en `/sys/fs/cgroup/memory.current` desde el notebook **no representa necesariamente ese cgroup**, y no es apropiada para seguridad.
+- A–B **completó según el usuario**, pero el momento de `ps`/`meminfo` relativo al final de B es incierto; los valores de RSS y RssAnon concuerdan aproximadamente con picos muestreados en M-001/M-002. **No inferir retención post-job de 8.83 GiB**.
+
+**Acción inmediata solicitada al usuario:** ejecutar `mark_m003("POST_AB_3")` inmediatamente y `mark_m003("POST_AB_3_SETTLED")` tras 60 s, junto con MemAvailable actual. No ejecutar más workflows, frees, unloads, reinstalaciones ni reinicios hasta recibir los resultados y correlacionar con timestamp.
