@@ -655,7 +655,7 @@ function renderPanel(root) {
 
   const warning = document.createElement("div");
   warning.textContent =
-    "LAB ONLY — bind two OPEN TOPBAR workflow tabs. Fresh compile before each Run (optional); immutable during the run. Use fixed seeds; beforeQueued-dependent nodes remain experimental.";
+    "LAB ONLY — bind two or three OPEN TOPBAR workflow tabs. Fresh compile before each Run (optional); immutable during the run. Cleanup C is opt-in. Use fixed seeds; beforeQueued-dependent nodes remain experimental.";
   warning.style.fontWeight = "600";
   warning.style.marginBottom = "8px";
   root.appendChild(warning);
@@ -766,13 +766,15 @@ function renderPanel(root) {
   const run = state.lastRun ?? { record: {} };
 
   const record = run.record ?? {};
-  const status = document.createElement("div");
-  status.style.marginTop = "8px";
-  status.textContent =
-    "Run " + (state.lastRunId ?? run.run_id ?? "?") +
-    " — phase: " + (record.phase ?? "?") +
-    (record.failure_code ? " — " + record.failure_code : "");
-  root.appendChild(status);
+  if (state.lastRun) {
+    const status = document.createElement("div");
+    status.style.marginTop = "8px";
+    status.textContent =
+      "Run " + (state.lastRunId ?? run.run_id ?? "?") +
+      " — phase: " + (record.phase ?? "?") +
+      (record.failure_code ? " — " + record.failure_code : "");
+    root.appendChild(status);
+  }
 
   if (record.failure_detail) {
     const failure = document.createElement("pre");
@@ -782,27 +784,6 @@ function renderPanel(root) {
   }
 
   const committedContext = record.context_manifest ?? {};
-  if (Object.keys(committedContext).length) {
-    const title = document.createElement("div");
-    title.textContent = "Committed Context keys (metadata only; run-scoped)";
-    title.style.marginTop = "12px";
-    title.style.fontWeight = "600";
-    root.appendChild(title);
-    const table = document.createElement("table");
-    table.style.fontSize = "12px";
-    table.style.width = "100%";
-    for (const [key, meta] of Object.entries(committedContext)) {
-      const tr = document.createElement("tr");
-      for (const cell of [key, meta?.type ?? "?", String(meta?.bytes ?? "?") + " bytes"]) {
-        const td = document.createElement("td");
-        td.textContent = cell;
-        td.style.padding = "3px 7px";
-        tr.appendChild(td);
-      }
-      table.appendChild(tr);
-    }
-    root.appendChild(table);
-  }
 
   const explorerTitle = document.createElement("div");
   explorerTitle.textContent = "Context explorer · metadata only";
