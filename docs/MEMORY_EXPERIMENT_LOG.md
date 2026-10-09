@@ -238,3 +238,25 @@ El usuario informa que la secuencia A–B **ya terminó** y muestra una celda de
 - A–B **completó según el usuario**, pero el momento de `ps`/`meminfo` relativo al final de B es incierto; los valores de RSS y RssAnon concuerdan aproximadamente con picos muestreados en M-001/M-002. **No inferir retención post-job de 8.83 GiB**.
 
 **Acción inmediata solicitada al usuario:** ejecutar `mark_m003("POST_AB_3")` inmediatamente y `mark_m003("POST_AB_3_SETTLED")` tras 60 s, junto con MemAvailable actual. No ejecutar más workflows, frees, unloads, reinstalaciones ni reinicios hasta recibir los resultados y correlacionar con timestamp.
+
+
+### M-003 — POST_AB_3 y POST_AB_3_SETTLED: tercera repetición completada (2026-10-09 UTC)
+El usuario informó que la secuencia A–B ya había finalizado; posteriormente ejecutó la celda de marcas posjob, sin realizar cleanup. **El valor alto de RSS ~8.83 GiB de la auditoría previa fue transitorio**, pues cayó a ~2.545 GiB al marcar POST_AB_3. Correlación con la frontera de job exacta aún pendiente (no IDs).
+
+**Datos suministrados directamente de Colab:**
+- `POST_AB_3` muestra `2026-10-09T05:38:42.771752Z`: RSS **2.545 GiB**, PSS **2.534 GiB**, PSS_Anon **2.415 GiB**, PSS_File **0.105 GiB**, GPU global **189 MiB**.
+- `POST_AB_3_SETTLED` muestra `2026-10-09T05:39:42.657881Z`, tras ~60s: **idénticos valores redondeados**; PID 16744 aún vivo.
+- El script imprimió etiquetas `RAM disponible:` pero **no muestra ningún valor** de `MemAvailable` en la respuesta; por tanto, el dato de RAM disponible posterior a M-003 es desconocido y hay que recuperarlo. Antes de la ejecución el sistema reportó 8.67 GiB disponibles y durante un pico la auditoría reportó 3.830 GiB; no inferir cuánto quedó al concluir.
+
+**Comparación de posjobs consecutivos (GiB):**
+| Métrica | M-001 | M-002 | M-003 |
+|---|---:|---:|---:|
+| RSS | 2.829 | 2.512 | 2.545 |
+| PSS | 2.813 | 2.499 | 2.534 |
+| PSS_Anon | 2.311 | 2.378 | 2.415 |
+| PSS_File | 0.488 | 0.107 | 0.105 |
+| GPU global MiB | 189 | 189 | 189 |
+
+El incremento residual anónimo es ~0.067 GiB de M-001 a M-002 y ~0.037 GiB de M-002 a M-003 (aprox. 69 y 38 MiB respectivamente), total ~106 MiB en dos transiciones. Respecto de la BASELINE pre-M-001, PSS_Anon sube desde 0.719 a 2.415 GiB (+1.696 GiB). La caída observada de RSS del pico de ~8.83 GiB a 2.545 GiB **no demuestra** que el resto sea recuperable ni prueba ausencia de retención indebida.
+
+**Decisión:** no lanzar cuarta repetición ni intentar unload ciego por ahora. Primero medir `MemAvailable` posterior a M-003 con una lectura directa de /proc y capturar comparadores del proceso/cachés del sistema, luego estudiar la atribución de memoria anónima del proceso. ProfilerX puede ayudar a atribuir deltas por nodo pero no establece por sí solo propietarios de memoria CPU residual ni una fuga. No tocar Context PR#6.
