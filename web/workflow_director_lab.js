@@ -4,6 +4,7 @@ import { api } from "../../scripts/api.js";
 const state = {
   A: null,
   B: null,
+  C: null,
   lastRunId: null,
   lastRun: null,
   pollToken: 0,
@@ -328,15 +329,12 @@ async function capture(slot) {
   const activeTab = selectedWorkflowTab();
   const frozen = snapshotCompiled(assertCompiled(await app.graphToPrompt()));
   const path = activeTab.dataset.workflowPath;
-  const otherSlot = slot === "A" ? "B" : "A";
-  if (state[otherSlot]?.tab_path === path) {
-    throw new Error("A and B must refer to different workflow tabs.");
-  }
-  if (state[otherSlot]?.workflow_id === frozen.workflow.id) {
-    throw new Error(
-      "A and B share the same workflow UUID. Give each workflow its own " +
-      "unique ID before linking it. No run was submitted."
-    );
+  const conflicting = ["A", "B", "C"].filter((other) => other !== slot)
+    .find((other) => state[other]?.tab_path === path ||
+      state[other]?.workflow_id === frozen.workflow.id);
+  if (conflicting) {
+    throw new Error("Workflow " + slot + " shares a tab or UUID with " +
+      conflicting + ". Use independent workflow documents.");
   }
 
   state[slot] = {
@@ -674,6 +672,9 @@ function renderPanel(root) {
     button("Capture current as B", () => capture("B"), state.isRunning)
   );
   captures.appendChild(
+    button("Capture current as Cleanup", () => capture("C"), state.isRunning)
+  );
+  captures.appendChild(
     button(
       "Run A only",
       () => startRun([state.A]),
@@ -696,6 +697,13 @@ function renderPanel(root) {
   );
   captures.appendChild(
     button(
+      "Run A → Cleanup → B",
+      () => startRun([state.A, state.C, state.B]),
+      !state.A || !state.C || !state.B || state.isRunning || state.monitoringUncertain
+    )
+  );
+  captures.appendChild(
+    button(
       "Refresh last run",
       () => refreshLastRun(),
       !state.lastRunId || state.isRunning
@@ -705,8 +713,9 @@ function renderPanel(root) {
 
   const standaloneNotice = document.createElement("div");
   standaloneNotice.textContent =
-    "Run B only is an independent run. Context from a previous Director run " +
-    "is not retained; use Run A → B when B must GET values published by A.";
+    "Run B only cannot read A from a previous run. Optional Cleanup (C) " +
+    "runs as an independent native job AFTER A commits Context and BEFORE B; " +
+    "use an already proven cleanup workflow. C must not contain Context nodes.";
   standaloneNotice.style.fontSize = "12px";
   standaloneNotice.style.marginTop = "6px";
   root.appendChild(standaloneNotice);
@@ -742,6 +751,8 @@ function renderPanel(root) {
     (state.A ? state.A.name + " [" + state.A.workflow_id + "]" : "not linked") +
     " | B: " +
     (state.B ? state.B.name + " [" + state.B.workflow_id + "]" : "not linked") +
+    " | Cleanup: " +
+    (state.C ? state.C.name + " [" + state.C.workflow_id + "]" : "not linked") +
     (state.autoRefresh ? " | compiled fresh before each Run" : " | manual snapshots");
   root.appendChild(slots);
   if (state.statusWarning) {
