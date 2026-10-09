@@ -29,3 +29,22 @@ En el grafo Comfy, el orden visual de nodos o `node.order` **no es una barrera d
 
 Context explícito debe ser el **único payload** sobreviviente de un workflow previo, además del suelo inevitable de ComfyUI/Python/CUDA. La ruta visual universal es solo primer escalón funcional; limpieza y retorno a baseline + Context forman el gate final, aún no aprobado.
 
+## Resultado observado: tipo de socket personalizado — 2026-10-09
+
+**Evidencia compartida por usuario, ejecución real en ComfyUI / Colab; sin historial nativo íntegro adjunto.**
+
+- Workflow A: `workflows/universal_unknown_socket_A.json`, document UUID `17233cf4-d372-48ce-9b66-36109970ad0c`.
+- Workflow B: `workflows/universal_unknown_socket_B.json`, document UUID `14211576-04d3-4b09-87b4-f46e5d86337d`.
+- Run UUID: `37d8e656-249a-45b0-8ef3-eaf7d9671d21`.
+- Reportado por panel: **phase completed**; Context `demo.mystery | VALUE | 142 bytes`.
+- Socket de A/B: `WD_MYSTERY_BUNDLE_V1`, deliberadamente desconocido para los nodos PUT/GET y el codec universal; `io.Custom` solo aparece en nodos de prueba `nodes/unknown_socket_lab.py`.
+- Contenido generado: `dict` con etiqueta, `torch.Tensor`, diccionario anidado, lista y tupla. El consumidor B (`WorkflowDirectorTestMysterySink`) es `is_output_node=True` y falla si cambian esos datos; la finalización exitosa con este workflow indica que el verificador terminó sin lanzar excepción.
+- **Aprobado funcionalmente:** empalme V3 `MatchType`/`AnyType` y transporte seguro de **estructura ordinaria tras un nombre de socket personalizado desconocido** entre jobs nativos independientes.
+- **No demostrado:** clonación de instancias Python opacas arbitrarias, tipos dinámicos de extensiones reales, identidad semántica de socket persistida en Context, durabilidad entre runs, memoria near-cold. `142 bytes` es tamaño lógico estimado del payload (no pico RSS/VRAM).
+- **Preferencia expresa del usuario:** para esta etapa **él asume la compatibilidad entre los sockets de A/B**; si conecta datos incompatibles, se acepta que B falle. No priorizar una capa automática de rechazo por nombre de socket antes de experimentar con tipos reales. Sí conservar la negativa segura a referencias de modelos u objetos opacos que impidan la liberación de memoria.
+
+Pruebas previas compartidas verbalmente:
+- Universal IMAGE: A/B jobs success, PreviewImage generó 1 imagen en historial y SaveImage produjo archivo; nodos visuales PreviewImage / GetImageSize no mostraron los resultados esperados en la pestaña B (incidencia frontend separada, sin diagnóstico cerrado).
+- Universal CONDITIONING: `Run 3caa60f9-2649-4ee1-9132-39f5bcc993d8`, `phase completed`, Context `demo.conditioning | VALUE | 135 bytes`, con sink verificando embeddings/pooled/metadatos.
+
+**Siguiente prueba de mayor valor:** transferir un socket personalizado *real* de una extensión instalada cuyo contenido sea una estructura copiable, usando los mismos PUT/GET; y una prueba negativa con objeto opaco para confirmar rechazo seguro (sin intentar preservar modelos vivos).
