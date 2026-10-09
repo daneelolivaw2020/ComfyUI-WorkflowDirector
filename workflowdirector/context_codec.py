@@ -39,7 +39,7 @@ class TorchContextCodec:
     def _latent_fields(self, value: Any):
         if not isinstance(value, Mapping) or "samples" not in value:
             raise ContextError("LATENT Context requires a mapping with 'samples'")
-        allowed = {"samples", "noise_mask", "batch_index", "type"}
+        allowed = {"samples", "noise_mask", "batch_index", "type", "downscale_ratio_spacial"}
         unknown = set(value) - allowed
         if unknown:
             raise ContextError(
@@ -75,6 +75,13 @@ class TorchContextCodec:
             if not isinstance(latent_type, str) or len(latent_type) > 128:
                 raise ContextError("LATENT type metadata must be a short string")
             total += len(latent_type.encode("utf-8"))
+        if "downscale_ratio_spacial" in latent:
+            ratio = latent["downscale_ratio_spacial"]
+            if type(ratio) is not int or not (1 <= ratio <= 256):
+                raise ContextError(
+                    "LATENT downscale_ratio_spacial must be an integer from 1 to 256"
+                )
+            total += 8
         return total
 
     def _copy_tensor(self, value: Any):
@@ -102,6 +109,8 @@ class TorchContextCodec:
             result["batch_index"] = list(value["batch_index"])
         if "type" in value:
             result["type"] = value["type"]
+        if "downscale_ratio_spacial" in value:
+            result["downscale_ratio_spacial"] = value["downscale_ratio_spacial"]
         return result, size
 
     def copy_out(self, kind: str, value: Any) -> Any:
