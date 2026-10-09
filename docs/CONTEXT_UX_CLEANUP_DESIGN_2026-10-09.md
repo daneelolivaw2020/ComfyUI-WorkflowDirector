@@ -27,3 +27,14 @@ Status: **experimental; implemented on `feature/universal-context-nodes`, not ac
 - Node preview restoring and dynamic `combo` UI behavior still require real ComfyUI v0.39.0 / frontend 1.53.10 browser acceptance, especially with subgraphs and the Vue frontend.
 - The inspector lists **known/planned keys**, not an omniscient database of all possible dynamic PUT keys before they execute.
 - Do not commit model credentials, tokens, user data, images, or downloaded weights. Only shape/name metadata appears in API responses.
+
+## Real Colab integrated acceptance (single workflow-level test)
+
+1. Keep `WD_REF = "feature/universal-context-nodes"`; rerun the custom-node install/update cell and restart **only the ComfyUI process**. Refresh the browser. No need to reboot Colab or download a model.
+2. Open `universal_image_A.json` (or your own Load Image→PUT), `cleanup_between_A_B_C.json` and `universal_image_B.json` (GET→SaveImage or PreviewImage) in **three distinct topbar tabs**, each with its own UUID.
+3. Capture A, B and Cleanup C with their respective buttons. Choose **Run A → Cleanup → B**. Compare with original **Run A → B** if cleanup causes trouble. Do not enable unknown aggressive unload mechanisms.
+4. Confirm A commits `demo.image`; C runs independently and does not publish Context; B consumes the preserved value; terminal phase is `completed`. The enhanced explorer should show the key, its payload shape and last-run snapshot after teardown.
+5. With **Show executing workflow tab** checked, B's visible PreviewImage output should be restored by history replay even for a fast job. If that still fails, read `/history/{job_id}` from native Comfy as the source of truth and report browser/frontend behavior separately.
+6. If any cleanup node crashes or refuses to run standalone, stop using the C button and return to A→B; the default path never uses C. Report the native error or crash details instead of retrying destructive cleanup blindly.
+
+**The C JSON was assembled using the same node names and boolean settings present in prior user-provided real A/B workflows. Its standalone scheduling remains unverified in the user's active Comfy environment.**
