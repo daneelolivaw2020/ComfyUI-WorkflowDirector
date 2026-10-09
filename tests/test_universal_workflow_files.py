@@ -67,5 +67,36 @@ class UniversalVisualWorkflowFilesTests(unittest.TestCase):
             self.assertEqual(graph["last_link_id"], link_id)
 
 
+    def test_unknown_socket_transfer_needs_no_type_specific_put_get(self):
+        a = json.loads((HERE / "universal_unknown_socket_A.json").read_text())
+        b = json.loads((HERE / "universal_unknown_socket_B.json").read_text())
+        custom_socket = "WD_MYSTERY_BUNDLE_V1"
+        self.assertNotEqual(a["id"], b["id"])
+        self.assertEqual([n["type"] for n in a["nodes"]], [
+            "WorkflowDirectorTestMysterySource",
+            "WorkflowDirectorContextPutUniversal",
+        ])
+        self.assertEqual([n["type"] for n in b["nodes"]], [
+            "WorkflowDirectorContextGetUniversal",
+            "WorkflowDirectorTestMysterySink",
+        ])
+        self.assertEqual(a["nodes"][0]["outputs"][0]["type"], custom_socket)
+        self.assertEqual(b["nodes"][1]["inputs"][0]["type"], custom_socket)
+        self.assertEqual(a["nodes"][1]["inputs"][0]["type"],
+                         "COMFY_MATCHTYPE_V3")
+        self.assertEqual(b["nodes"][0]["outputs"][0]["type"], "*")
+        self.assertEqual(a["nodes"][1]["widgets_values"], ["demo.mystery"])
+        self.assertEqual(a["nodes"][1]["widgets_values"],
+                         b["nodes"][0]["widgets_values"])
+        self.assertEqual(a["nodes"][0]["widgets_values"],
+                         b["nodes"][1]["widgets_values"])
+        for workflow in (a, b):
+            self.assertEqual(workflow["links"][0][5], custom_socket)
+            nodes = {n["id"]: n for n in workflow["nodes"]}
+            _, source, source_slot, dest, dest_slot, _ = workflow["links"][0]
+            self.assertEqual(nodes[source]["outputs"][source_slot]["links"], [1])
+            self.assertEqual(nodes[dest]["inputs"][dest_slot]["link"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
