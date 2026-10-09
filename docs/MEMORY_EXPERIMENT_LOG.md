@@ -260,3 +260,16 @@ El usuario informó que la secuencia A–B ya había finalizado; posteriormente 
 El incremento residual anónimo es ~0.067 GiB de M-001 a M-002 y ~0.037 GiB de M-002 a M-003 (aprox. 69 y 38 MiB respectivamente), total ~106 MiB en dos transiciones. Respecto de la BASELINE pre-M-001, PSS_Anon sube desde 0.719 a 2.415 GiB (+1.696 GiB). La caída observada de RSS del pico de ~8.83 GiB a 2.545 GiB **no demuestra** que el resto sea recuperable ni prueba ausencia de retención indebida.
 
 **Decisión:** no lanzar cuarta repetición ni intentar unload ciego por ahora. Primero medir `MemAvailable` posterior a M-003 con una lectura directa de /proc y capturar comparadores del proceso/cachés del sistema, luego estudiar la atribución de memoria anónima del proceso. ProfilerX puede ayudar a atribuir deltas por nodo pero no establece por sí solo propietarios de memoria CPU residual ni una fuga. No tocar Context PR#6.
+
+
+### M-003 — ZIP completo recibido, D1 cerrada con tres corridas comparables
+
+Archivo original adjunto en la conversación: `M003_memory_AB.zip`; análisis reproducible y completo en **[MEMORY_M003_TRACE_ANALYSIS_2026-10-08.md](MEMORY_M003_TRACE_ANALYSIS_2026-10-08.md)**. El ZIP contiene 231 muestras / 3 marcadores, 05:33:12.983–05:41:17.341Z, cadencia mediana ~2.078 s y sin huecos >3 s; PID Comfy 16744 idéntico en las tres sesiones.
+
+**M-003 máximos:** RSS 8.865070 GiB @05:37:03Z, PSS_Anon 7.240677 GiB @05:37:30Z, PSS_File 5.213529 GiB @05:36:41Z, VRAM GPU global 12125 MiB @05:35:41Z. **POST_AB_3:** RSS 2.544762, PSS 2.533617, PSS_Anon 2.414989, PSS_File 0.104952 GiB; NVML global 189 MiB. 94 muestras a partir de 05:38:05Z (~3m12 s de reposo) sin acumulación relevante adicional (~5 MiB de rango inicial en RSS/anon).
+
+**Medición global *después* de ejecutar:** MemTotal 12.671 GiB, MemFree 4.809 GiB, MemAvailable **8.663 GiB**, Cached 3.880 GiB, AnonPages 3.356 GiB; Director active_run_id=None. **Esto demuestra que el MemAvailable bajo (3.830 GiB) observado cerca del pico no es el estado de reposo final.** No confundir 4.008 GiB (MemTotal−MemAvailable) con memoria inútil o descargable.
+
+Tres finales PSS_Anon: **2.311440 → 2.377937 → 2.414989 GiB**; +68 MiB y luego +38 MiB (~+106 MiB total). No hay evidencia de incremento grande sin límite en estas tres corridas, pero tampoco está demostrada la meseta o el propietario de los ~1.696 GiB adicionales desde el BASELINE 0.719 GiB original.
+
+**Decisión:** cerrar pruebas de reproducción D1, no repetir A–B sin un fin discriminativo. **Siguiente paso único:** observar `/proc/16744/smaps` y estado/cgroup del proceso ya inactivo para atribuir resident anonymous a tipos de mapeo ([heap], anon, file COW) sin hooks ni CUDA y sin descargar nada. Más adelante instalar ProfilerX pinned como experimento D2 independiente si hace falta atribución por nodo. Sin IDs nativos A/B aún no se pueden asignar exactamente los bloques GPU.
