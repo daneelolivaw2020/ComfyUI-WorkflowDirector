@@ -91,3 +91,22 @@ Celda `mark("BASELINE")` ejecutada durante el muestreo externo de `/content/memo
 **Lectura preliminar, NO diagnóstico causal:** de PSS, ~0.512 GiB se asigna proporcionalmente a páginas file-backed que pueden incluir librerías, archivos mmap u otras páginas de archivo; ~0.719 GiB a páginas anónimas. El residuo PSS no desglosado corresponde potencialmente a Shmem/redondeo; no asumir que sea leak. No hay todavía corridas A/B ni datos de picos o retención después de workflows.
 
 **Siguiente paso:** ejecutar secuencia Q4→Q6 habitual manteniendo flags/modelos y monitor externo; registrar prompt/run IDs, intervalos y marcas de POST_A/PRE_B si la orquestación permite distinguirlas, de lo contrario correlacionar por timestamps del registro nativo sin detener la ejecución.
+
+
+### M-001 — POST_AB y POST_AB_SETTLED (observaciones reportadas por el usuario, 2026-10-09 UTC / 2026-10-08 CDMX)
+
+El usuario ejecutó `mark("POST_AB")` a `2026-10-09T05:05:22.108350+00:00` y `mark("POST_AB_SETTLED")` a `2026-10-09T05:05:37.109427+00:00`; ambos marcadores leen la última muestra disponible del monitor y **no son mediciones síncronas al microsegundo del job**.
+
+| Métrica | BASELINE | POST_AB | POST_AB_SETTLED | Cambio BASELINE→POST_AB |
+|---|---:|---:|---:|---:|
+| RSS proceso GiB | 1.257 | 2.829 | 2.829 | +1.572 |
+| PSS proceso GiB | 1.241 | 2.813 | 2.813 | +1.572 |
+| PSS anónimo GiB | 0.719 | 2.311 | 2.311 | +1.592 |
+| PSS respaldado por archivos GiB | 0.512 | 0.488 | 0.488 | -0.024 |
+| GPU global MiB | 105 | 189 | 189 | +84 |
+
+**Observaciones restringidas:** el aumento de PSS se concentra en páginas anónimas, no en `Pss_File`. En las dos lecturas separadas ~15 s no se observó reducción, pero no se puede clasificar como fuga, ni como memoria no recuperable. GPU es global, no exclusivo del proceso; el aumento no identifica objetos vivos de Torch. Sin curvas de tiempo aún no conocemos picos, secuencia interna A/B ni cuándo aparece el incremento.
+
+**Monitor:** activo según la salida del usuario; `/content/memory_20261009_045123.jsonl`; marcas `/content/memory_20261009_045123_markers.jsonl`. **Datos faltantes:** archivo JSONL completo, timestamp exacto de cada muestra, IDs/estados terminales de A/B, peak RSS/PSS/VRAM, observaciones Torch allocator antes/después. No se ha instalado ProfilerX ni se ha ejecutado cleanup por el asistente.
+
+**Siguiente acción:** extraer picos y serie temporal de la ventana PRE_AB→POST_AB desde los archivos ya registrados, correlacionar IDs / tiempos y verificar resultado de A y B antes de ensayar ningún remedio o instalar ProfilerX.
