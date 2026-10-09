@@ -227,7 +227,7 @@ test("two workflow tabs sharing the same UUID cannot be linked", async () => {
   e.makeTab("temp/B", "B", "id-shared");
   await e.lab.capture("A");
   e.select("temp/B");
-  await assert.rejects(() => e.lab.capture("B"), /same workflow UUID/);
+  await assert.rejects(() => e.lab.capture("B"), /shares a tab or UUID/);
 });
 
 test("bad UUID acknowledgement is treated as ambiguous acceptance", async () => {
@@ -244,7 +244,7 @@ test("bad UUID acknowledgement is treated as ambiguous acceptance", async () => 
 
 test("Run B only UI action is wired to exactly B and clearly warns about run-scoped Context", () => {
   assert.match(source, /"Run B only",\s*\(\) => startRun\(\[state\.B\]\)/);
-  assert.match(source, /Context from a previous Director run/);
+  assert.match(source, /Run B only cannot read A from a previous run/);
 });
 
 test("Run B only submits one fresh B workflow and never queues A", async () => {
@@ -376,4 +376,44 @@ test("do not apply B image outputs to A when followActive is disabled", async ()
   });
   assert.equal(e.active(), "temp/A");
   assert.equal(e.app.nodeOutputs?.["3"], undefined);
+});
+
+
+test("three linked tabs run in A → Cleanup → B order with fresh independent prompt snapshots", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "Producer", "id-A", 11);
+  e.makeTab("temp/C", "Cleanup", "id-C", 22);
+  e.makeTab("temp/B", "Consumer", "id-B", 33);
+  await e.lab.capture("A");
+  e.select("temp/C");
+  await e.lab.capture("C");
+  e.select("temp/B");
+  await e.lab.capture("B");
+  e.tabs.get("temp/C").seed = 222;
+  await e.lab.startRun([e.lab.state.A, e.lab.state.C, e.lab.state.B]);
+  assert.equal(e.posted.length, 1);
+  assert.deepEqual(Array.from(e.posted[0].steps.map((s) => s.step_id)),
+    ["A", "C", "B"]);
+  assert.equal(e.posted[0].steps[1].prompt["1"].inputs.seed, 222);
+  assert.equal(e.posted[0].steps[1].tab_path, undefined);
+});
+
+test("Cleanup capture cannot share a tab or workflow UUID with A or B", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "A", "id-A");
+  e.makeTab("temp/C", "Cleanup", "id-C");
+  await e.lab.capture("A");
+  await assert.rejects(() => e.lab.capture("C"), /shares a tab or UUID/);
+  e.select("temp/C");
+  await e.lab.capture("C");
+  e.makeTab("temp/B", "B", "id-C");
+  e.select("temp/B");
+  await assert.rejects(() => e.lab.capture("B"), /shares a tab or UUID/);
+});
+
+test("Cleanup option remains opt-in rather than being inserted in A → B", () => {
+  assert.match(source, /"Run A → Cleanup → B"/);
+  assert.match(source, /startRun\(\[state\.A, state\.C, state\.B\]\)/);
+  assert.match(source, /"Run A → B"/);
+  assert.match(source, /startRun\(\[state\.A, state\.B\]\)/);
 });
