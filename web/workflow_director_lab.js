@@ -277,7 +277,9 @@ function attachGetKeySelector(node) {
   const keyWidget = node.widgets.find((widget) => widget.name === "key");
   if (!keyWidget || node.widgets.some((widget) => widget.name === "context_key_picker")) return;
   const empty = "Choose Context key…";
-  const options = {};
+  // Comfy frontend graphToPrompt checks widget.options.serialize, whereas
+  // LiteGraph workflow persistence checks widget.serialize separately.
+  const options = { serialize: false };
   Object.defineProperty(options, "values", {
     enumerable: true,
     get: () => [empty, ...availableContextKeys()],
