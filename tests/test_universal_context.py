@@ -126,6 +126,17 @@ class UniversalContextTests(unittest.TestCase):
         with self.assertRaisesRegex(ContextError, "dict keys"):
             self.codec.copy_in("VALUE", {123: "value"})
 
+    def test_tensor_subclass_rejected_before_custom_transfer(self):
+        class TensorWithHiddenState(FakeTensor):
+            def to(self, *, device, copy):
+                raise AssertionError("Never call a custom tensor transfer method")
+        value = {"model_attached_tensor": TensorWithHiddenState([1, 2])}
+        with self.assertRaisesRegex(ContextError, "tensor subclasses"):
+            self.codec.estimate_size("VALUE", value)
+        with self.assertRaisesRegex(ContextError, "tensor subclasses"):
+            self.codec.copy_in("VALUE", value)
+        self.assertEqual(FakeTensor.transfer_count, 0)
+
     def test_plain_data_and_bytes_roundtrip(self):
         value = {"numbers": [3, 4.5, True, None], "raw": bytearray(b"abc")}
         stored, size = self.codec.copy_in("VALUE", value)
