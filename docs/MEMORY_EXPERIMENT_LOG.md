@@ -204,3 +204,14 @@ Salida de la celda `mark_m002` suministrada por el usuario; **no se aportaron a�
 - **Reposo post actividad:** 88 muestras de 05:27:06.434Z a 05:30:05.934Z con RSS 2.511574 y PSS_Anon 2.377937 GiB constantes.
 - **Comparación finales de M-001 → M-002:** RSS -0.317516 GiB, PSS_Anon +0.066498 GiB (~68 MiB), PSS_File -0.380919 GiB, VRAM global 189→189 MiB. El RSS decreció gracias a menor residencia file-backed; el pequeño aumento de anónima permanece sin propietario identificado.
 - **Estado:** dos corridas en mismo PID, M-001 A y B reportados completados; M-002 finalización formal/IDs todavía no recibidos. No se demuestra fuga ni limpieza completa. **Siguiente prueba**: M-003 repetición idéntica en el mismo proceso para contrastar tendencia PSS_Anon, bajo preflight de recursos, antes de instalar ProfilerX.
+
+
+### M-003 — preflight tercera corrida, aún SIN resultado (2026-10-08 CDMX / 2026-10-09 UTC)
+Datos reportados por el usuario, mismo PID previsto 16744 sin reinicio, monitor M-003 activo; marcación `PRE_AB_3` sobre muestra `2026-10-09T05:33:17.087278+00:00`:
+- `MemAvailable = 8.67 GiB`; la medición equivalente anterior al M-002 fue 8.78 GiB (~0.11 GiB más). Las cifras de `MemAvailable` son estimaciones Linux con page cache parcialmente recuperable, **no son RSS ni garantía de ausencia de OOM**.
+- GPU global usada **189 MiB**, libre reportada **14724 MiB** (NVIDIA T4).
+- `RSS = 2.512 GiB`; `PSS = 2.499 GiB`; `PSS_Anon = 2.378 GiB`; `PSS_File = 0.107 GiB`; idéntico al final previo M-002 a la precisión mostrada.
+- La RAM total del sistema informada en el preflight anterior es 12.67 GiB. M-002 tuvo un pico de RSS de 8.686 GiB desde 2.512 GiB (aumento 6.174 GiB); comparado con MemAvailable 8.67 GiB indica un **margen aproximado de 2.5 GiB si la corrida es comparable**, pero el cómputo es aproximado y puede ocultar picos simultáneos de otros procesos.
+- **Situación:** el usuario indicó que procederá a ejecutar A–B. Aún no hay POST_AB_3, picos ni IDs de M-003. No atribuir éxito, fracaso, acumulación o liberación hasta recibir resultados.
+
+**Siguiente acción:** tras fin de A/B, registrar `POST_AB_3` y `POST_AB_3_SETTLED`; revisar aumento de PSS_Anon respecto a 2.378 GiB y preparar tercera traza, sin limpieza.
