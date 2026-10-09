@@ -76,3 +76,18 @@
 - La salida abreviada del watcher no contiene PSS/Pss_Anon/Pss_File; deben extraerse del JSONL antes de atribuir memoria. Baseline de pocos segundos no demuestra ausencia de retención.
 - **Pendiente:** ejecutar A Klein Q4 y B Klein Q6 sin plugins adicionales y correlacionar timestamps/IDs con el JSONL. No se observan ejecuciones A/B en estos datos.
 
+
+
+### M-001 — BASELINE con smaps_rollup (usuario, 2026-10-09T04:57:58.835073Z / 2026-10-08 22:57 CDMX)
+
+Celda `mark("BASELINE")` ejecutada durante el muestreo externo de `/content/memory_20261009_045123.jsonl`. La función tomó la **última muestra ya escrita** al momento del marcador; el timestamp exacto de esa muestra está en `sample_utc` dentro del archivo de marcas, pendiente de exportar. Datos reportados por el usuario:
+- `rss_bytes`: **1.257 GiB**
+- `pss_bytes`: **1.241 GiB**
+- `pss_anon_bytes`: **0.719 GiB**
+- `pss_file_bytes`: **0.512 GiB**
+- GPU global `nvidia-smi`: **105 MiB**
+- Marcador: `BASELINE` en `2026-10-09T04:57:58.835073+00:00`; archivo de markers con sufijo `_markers.jsonl`.
+
+**Lectura preliminar, NO diagnóstico causal:** de PSS, ~0.512 GiB se asigna proporcionalmente a páginas file-backed que pueden incluir librerías, archivos mmap u otras páginas de archivo; ~0.719 GiB a páginas anónimas. El residuo PSS no desglosado corresponde potencialmente a Shmem/redondeo; no asumir que sea leak. No hay todavía corridas A/B ni datos de picos o retención después de workflows.
+
+**Siguiente paso:** ejecutar secuencia Q4→Q6 habitual manteniendo flags/modelos y monitor externo; registrar prompt/run IDs, intervalos y marcas de POST_A/PRE_B si la orquestación permite distinguirlas, de lo contrario correlacionar por timestamps del registro nativo sin detener la ejecución.
