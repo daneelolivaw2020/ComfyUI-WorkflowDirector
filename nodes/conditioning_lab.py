@@ -35,6 +35,35 @@ class WorkflowDirectorTestConditioningSource(io.ComfyNode):
         return io.NodeOutput(conditioning)
 
 
+class _UnsafeControlReference:
+    """Non-Tensor stand-in for a model-attached conditioning object."""
+    pass
+
+
+class WorkflowDirectorTestConditioningUnsafeSource(io.ComfyNode):
+    @classmethod
+    def define_schema(cls) -> io.Schema:
+        return io.Schema(
+            node_id="WorkflowDirectorTestConditioningUnsafeSource",
+            display_name="WorkflowDirector · Unsafe Conditioning (Lab)",
+            category="Workflow Director/Lab",
+            inputs=[],
+            outputs=[io.Conditioning.Output(display_name="conditioning")],
+        )
+
+    @classmethod
+    def execute(cls) -> io.NodeOutput:
+        import torch
+
+        # This is deliberately not a real ControlNet, to avoid downloading
+        # or loading models just to exercise the fail-closed rule.
+        embeddings = torch.arange(12, dtype=torch.float32).reshape(1, 3, 4)
+        return io.NodeOutput([[embeddings, {
+            "pooled_output": torch.ones((1, 4), dtype=torch.float32),
+            "control": _UnsafeControlReference(),
+        }]])
+
+
 class WorkflowDirectorTestConditioningSink(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
