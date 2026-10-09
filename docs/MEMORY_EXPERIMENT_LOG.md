@@ -293,3 +293,18 @@ Tres finales PSS_Anon: **2.311440 → 2.377937 → 2.414989 GiB**; +68 MiB y lue
 **Relevancia:** atribución VMA ≠ identidad del allocator ni prueba de objeto vivo. No afirmar que los 2.087 GiB sean "fuga" o que se puedan devolver sin riesgo. Comparación con baseline ANTES de M-001 a nivel VMA **no disponible**; no atribuir todo este subtotal al incremento +1.696 GiB desde baseline.
 
 **Siguiente acción única:** inspección más precisa *read-only* de tamaños virtuales, RSS anónima, permisos, vecinos y `VmFlags` de las regiones ~63 MiB, agrupar número y suma RSS. No ejecutar `malloc_trim`, `MALLOC_ARENA_MAX`, `MALLOC_MMAP_THRESHOLD_`, /free ni unload mientras no haya evidencia y una corrida de validación aislada. ProfilerX posterior puede atribuir nodo de crecimiento pero no necesariamente la propiedad CPU final.
+
+
+### M-005 — Patrones anónimos de 64 MiB, indicios de heaps secundarios glibc (2026-10-08 CDMX)
+
+**Salida del usuario, sobre el mismo PID Comfy 16744 en reposo, /proc/16744/smaps:**
+- **540** regiones anónimas por el clasificador; **2.087 GiB** de memoria anónima residente.
+- **13** regiones con `Anonymous` entre **60 y 66 MiB**, suma **818 MiB** (cuantizadas por la salida). Entre las 15 regiones mayores están tres mapeos de ~83.0, 81.9, 80.3 MiB y muchas `rw-p` de ~63.0 MiB.
+- La inspección de vecinos muestra sistemáticamente bloque `rw-p` de **63 MiB** junto a bloque sin acceso `---p` de **1 MiB** (para 5 ejemplos). Total virtual aparentemente **64 MiB** por pareja. `VmFlags` de las regiones grandes: `rd wr mr mw me ac sd`.
+- El proceso reporta **36 hilos**.
+
+**Interpretación y fuente técnica verificada:** glibc `malloc/arena.c` documenta heaps secundarios asignados mediante `mmap`, alineados al límite `HEAP_MAX_SIZE` (usualmente 64 MiB en glibc 64-bit común), reservando PROT_NONE y habilitando parcialmente con mprotect. Documentación upstream https://codebrowser.dev/glibc/glibc/malloc/arena.c.html; explicación de trade-offs entre arenas y memoria: https://www.man7.org/linux/man-pages/man3/mallopt.3.html.
+El patrón 63MiB rw +1MiB ---p es **MUY compatible con heaps secundarios de malloc arenas**, reforzado por multihilo, pero aún **no confirmado**: falta verificar direcciones alineadas a 64MiB, adyacencia exacta y nombres `[anon: glibc: malloc arena]` si disponibles. **13 heap mappings ≠ automáticamente 13 arenas.**
+Los **818 MiB están residentes, no constituyen una medición de bytes libres dentro del allocator**, ni garantiza que sean liberables. El mapa completo incluye 2.087 GiB anon mmap, 0.271 GiB [heap] y 0.056 GiB anónimo COW-file, pero no sabemos cuáles regiones aportaron el crecimiento +1.696 GiB vs baseline anterior.
+
+**Siguiente paso (sin modificar proceso):** verificar `start_addr mod 64MiB`, adyacencia `rw-p/---p`, tamaño combinado 64MiB y etiquetas reales de VMA en `/proc/16744/smaps`; registrar número de bloques y RSS. No tocar `malloc_trim`, `MALLOC_ARENA_MAX`, `MALLOC_MMAP_THRESHOLD_` ni procesos CUDA. Después decidir si vale la pena una instrumentación `malloc_info` acotada en entorno aislado o si los datos de node attribution de ProfilerX son prioritarios.
