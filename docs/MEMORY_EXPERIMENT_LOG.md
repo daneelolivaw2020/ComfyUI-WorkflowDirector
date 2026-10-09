@@ -215,3 +215,11 @@ Datos reportados por el usuario, mismo PID previsto 16744 sin reinicio, monitor 
 - **Situación:** el usuario indicó que procederá a ejecutar A–B. Aún no hay POST_AB_3, picos ni IDs de M-003. No atribuir éxito, fracaso, acumulación o liberación hasta recibir resultados.
 
 **Siguiente acción:** tras fin de A/B, registrar `POST_AB_3` y `POST_AB_3_SETTLED`; revisar aumento de PSS_Anon respecto a 2.378 GiB y preparar tercera traza, sin limpieza.
+
+
+### M-003 — cambio de decisión: pausa antes de repetir A→B, auditoría de RAM disponible
+**Motivo:** tras el preflight con MemTotal=12.67 GiB, MemAvailable=8.67 GiB, RSS Comfy=2.512 GiB y PSS_Anon=2.378 GiB, el usuario cuestionó expresamente que la RAM disponible fuera tan baja y pidió no continuar con la repetición sin entender la ocupación. El experimento M-003 tiene **marcador PRE_AB_3**, pero **no hay POST_AB_3 ni evidencia de que A/B se haya ejecutado** en esta conversación. No registrar M-003 como completado.
+
+**Corrección del criterio:** la estimación simplificada de margen de ~2.5 GiB (MemAvailable menos variación previa de RSS) no constituye umbral anti-OOM validado; no utilizarla como garantía. MemAvailable de Linux es una estimación de memoria disponible incluyendo caché recuperable y no identifica propietarios. La diferencia total−available es ~4.00 GiB, que incluye tanto procesos como memoria no inmediatamente recuperable. El salto de Comfy PSS_Anon desde M-001 BASELINE 0.719 hasta PRE_AB_3 2.378 GiB es de ~1.659 GiB **cuya función/propiedad no se ha atribuido**, no se puede declarar desperdicio ni necesariamente liberable.
+
+**Siguiente única acción:** captura de solo lectura de `free -h`, campos explicativos de `/proc/meminfo`, `/proc/16744/status` y principales procesos por RSS (sin argumentos potencialmente sensibles). Verificar cgroups del notebook y del proceso Comfy por separado, sin modificar runtime, caches, Torch o CUDA. Luego reevaluar si conviene ProfilerX/atribución CPU o nueva carga. Si la corrida M-003 ya fue arrancada, dejarla terminar sin unload y documentar post antes de más acciones.
