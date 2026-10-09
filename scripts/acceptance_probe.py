@@ -10,6 +10,7 @@ Usage:
   python scripts/acceptance_probe.py --case image
   python scripts/acceptance_probe.py --case latent
   python scripts/acceptance_probe.py --case failure
+  python scripts/acceptance_probe.py --case universal_image
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ NODE_TYPES = (
     "WorkflowDirectorContextGetImage",
     "WorkflowDirectorContextPutLatent",
     "WorkflowDirectorContextGetLatent",
+    "WorkflowDirectorContextPutUniversal",
+    "WorkflowDirectorContextGetUniversal",
     "WorkflowDirectorTestMarker",
     "EmptyImage", "EmptyLatentImage", "SaveImage", "SaveLatent",
 )
@@ -164,6 +167,25 @@ def plans(case):
         }
         return [step("A", "PutImage", a), step("B", "GetImage", b)], (
             "accept.image", "IMAGE", f"WD_Acceptance_IMAGE_{run}"
+        )
+
+    if case == "universal_image":
+        a = {
+            "1": {"class_type": "EmptyImage",
+                  "inputs": {"width": 96, "height": 64, "batch_size": 1,
+                             "color": 0x2F8C6B}},
+            "2": {"class_type": "WorkflowDirectorContextPutUniversal",
+                  "inputs": {"key": "accept.universal", "value": ["1", 0]}},
+        }
+        b = {
+            "1": {"class_type": "WorkflowDirectorContextGetUniversal",
+                  "inputs": {"key": "accept.universal"}},
+            "2": {"class_type": "SaveImage",
+                  "inputs": {"images": ["1", 0],
+                             "filename_prefix": f"WD_Acceptance_UNIVERSAL_{run}"}},
+        }
+        return [step("A", "PutUniversal", a), step("B", "GetUniversal", b)], (
+            "accept.universal", "VALUE", f"WD_Acceptance_UNIVERSAL_{run}"
         )
 
     if case == "latent":
@@ -307,7 +329,7 @@ def run_case(case, *, max_seconds=120):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--case", choices=("preflight", "string", "image", "latent", "failure"),
+        "--case", choices=("preflight", "string", "image", "latent", "failure", "universal_image"),
         required=True
     )
     parser.add_argument("--timeout", type=int, default=120)
