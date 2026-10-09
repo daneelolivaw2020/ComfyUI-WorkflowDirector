@@ -163,6 +163,8 @@ class RunRecord:
     # Small metadata-only snapshot of committed Context keys for diagnostics.
     # Actual tensors are never held by RunRecord or serialized to HTTP.
     context_manifest: dict[str, dict[str, str | int]] = field(default_factory=dict)
+    # Bounded metadata-only structural snapshot, retained after run teardown.
+    context_inspection: dict[str, Any] = field(default_factory=dict)
     failure_code: str | None = None
     failure_detail: str | None = None
 
