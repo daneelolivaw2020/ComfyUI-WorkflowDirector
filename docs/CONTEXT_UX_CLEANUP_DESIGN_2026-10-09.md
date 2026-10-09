@@ -1,0 +1,29 @@
+# WorkflowDirector: Context explorer, key picker and optional cleanup boundary
+
+Status: **experimental; implemented on `feature/universal-context-nodes`, not accepted in a real Colab T4 until user retests.** Do not merge PR #6 as accepted yet. Stable `feature/colab-acceptance` unchanged.
+
+## Product behavior
+
+1. **Context is run-scoped**, transactional, and owns detached CPU copies. PUT stages a copy while its native job executes; it is published only after native status COMPLETED. B GET reads the committed copy. The service's `end_run` destroys all committed/staged data on every terminal run exit.
+2. **Context Explorer** in WorkflowDirector Lab shows three distinct states: planned keys found in captured producer PUT nodes, live committed keys from `GET /workflowdirector/context`, and the last-run **metadata snapshot only** retained in the RunRecord. The API does not reveal payload values, tensor contents, or uncommitted writes.
+3. The ComfyUI universal GET node retains its manually editable `key` STRING input and adds a helper **`context_key_picker` combo**, drawing candidates from captured PUT keys, active committed keys and last-run key names. Choosing a key updates the original `key` widget; the combo is not a second API input. Dynamic/link-computed keys must still be entered or connected manually.
+4. The run record includes bounded **shape metadata** (`context_inspection`): kinds, container structure, tensor dimensions and dtypes. This is introspection **of copies already held in Context**, not a new retention of live tensors. Container keys may be shown; string, numeric and tensor values are not.
+5. For fast B, the Lab reads canonical completed output metadata from native `GET /history/{job_id}` and reapplies it **to the matching, verified B tab only** when the "Show executing workflow tab" option is enabled. This fixes a probable missed-websocket-event race. Colab frontend acceptance remains required; no claim that it fixes all display nodes.
+6. **Optional C workflow**: `Run A → Cleanup → B` (distinct from the original A→B). C is an independent native job inserted **after A commits Context and before B starts**. C cannot contain any `WorkflowDirectorContext*` nodes; it cannot read or overwrite keys. After C completes, the Director verifies that committed Context key/type/size metadata remains unchanged before proceeding. A cleanup crash or failed native job stops the run; B is not queued.
+7. Example standalone `workflows/cleanup_between_A_B_C.json` uses a **tiny EmptyImage trigger → MemoryStatus → MemoryManager → RAMCleanup → SaveImage**, copied from the user-proven **node class names and settings**; it is not itself accepted on T4 yet. The cleanup nodes are third-party dependencies and are used **only if the user selects this option**.
+
+## Context preservation contract
+
+- **CPU ownership**: the universal codec clones dense ordinary Torch tensors to detached CPU storage; ordinary dict/list/tuple data is cloned recursively. Comfy model cache unload and `torch.cuda.empty_cache` should not erase Context-owned CPU objects. Normal Python `gc.collect()` cannot collect objects still referenced by the live registry.
+- **Sequence**: A native COMPLETED → `commit_step(A)` → optional separately scheduled C → `commit_step(C)` (empty) → guarded boundary → `begin_step(B)` → B GET.
+- **Guard limitation**: the committed-manifest comparison detects missing/replaced keys and size/type changes, **not an in-place byte-level mutation** of a tensor without changing its dimensions. This is supplemental; real correctness relies on independent ownership and not giving cleanup code direct registry access.
+- **Resource limits**: current universal codec accepts only plain data and ordinary dense tensors (max 128 MiB per entry, 256 MiB total). Live MODEL, CLIP, VAE, arbitrary custom objects, unsupported tensor subclasses and GPU ownership are intentionally excluded.
+- **No implicit unload**: WorkflowDirector core still does **not** call Comfy `/free`, force-unload loaded models, clear global execution caches, or invoke CUDA APIs. The example C job intentionally uses the user's already-tested cleanup nodes but its different execution placement must be tested on Colab before relying on it. It may fail or be unsafe in some setups.
+- A `completed` run's `context_inspection` and `context_manifest` are *historical metadata only*; B-only on a new run **cannot** read previous Context.
+
+## Developer verification and limitations
+
+- Unit tests cover: exact metadata-only inspection, staged values not appearing before commit, GC preserving committed data, suspicious boundary edits stopping B, A→C→B scheduling and Context preservation, C preflight rejection, frontend key selector, latest-run identity and native image output recovery.
+- Node preview restoring and dynamic `combo` UI behavior still require real ComfyUI v0.39.0 / frontend 1.53.10 browser acceptance, especially with subgraphs and the Vue frontend.
+- The inspector lists **known/planned keys**, not an omniscient database of all possible dynamic PUT keys before they execute.
+- Do not commit model credentials, tokens, user data, images, or downloaded weights. Only shape/name metadata appears in API responses.
