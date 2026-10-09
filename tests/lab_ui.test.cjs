@@ -227,3 +227,37 @@ test("bad UUID acknowledgement is treated as ambiguous acceptance", async () => 
   assert.equal(e.lab.state.monitoringUncertain, true);
   assert.equal(e.posted.length, 1);
 });
+
+test("Run B only UI action is wired to exactly B and clearly warns about run-scoped Context", () => {
+  assert.match(source, /"Run B only",\\s*\\(\\) => startRun\\(\\[state\\.B\\]\\)/);
+  assert.match(source, /Context from a previous Director run/);
+});
+
+test("Run B only submits one fresh B workflow and never queues A", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "A", "id-A", 31);
+  e.makeTab("temp/B", "B", "id-B", 42);
+  await e.lab.capture("A");
+  e.select("temp/B");
+  await e.lab.capture("B");
+  e.tabs.get("temp/B").seed = 43;
+  await e.lab.startRun([e.lab.state.B]);
+  assert.equal(e.posted.length, 1);
+  assert.equal(e.posted[0].steps.length, 1);
+  assert.equal(e.posted[0].steps[0].step_id, "B");
+  assert.equal(e.posted[0].steps[0].workflow_id, "id-B");
+  assert.equal(e.posted[0].steps[0].prompt["1"].inputs.seed, 43);
+  assert.equal(e.posted[0].steps[0].tab_path, undefined);
+});
+
+test("Run B only fails closed when B tab is closed", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/B", "B", "id-B", 42);
+  await e.lab.capture("B");
+  e.tabs.delete("temp/B");
+  await assert.rejects(
+    () => e.lab.startRun([e.lab.state.B]),
+    /closed or missing/
+  );
+  assert.equal(e.posted.length, 0);
+});
