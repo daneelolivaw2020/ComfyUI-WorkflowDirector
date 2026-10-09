@@ -375,3 +375,16 @@ El usuario informa que agotó las horas de Colab Free y está creando una **nuev
 El usuario confirma que la nueva sesión de Colab pertenece a **otra cuenta**, por lo que ninguna ruta efímera previa (`/content/WD_GLIBC_BACKUP_20261009_060742`, copia de prueba/archivos locales previos) debe darse por existente. **Terminó todas las celdas de instalación y se detuvo ANTES de arrancar ComfyUI por primera vez.**
 
 **Decisión:** capturar `M009_PRE_COMFY` (MemTotal, MemAvailable, MemFree, Cached, AnonPages, Shmem, SReclaimable, GPU NVML global, Python/Torch metadata sin import torch, glibc version, Comfy/WorkflowDirector Git SHAs y estado, ausencia de PID Comfy). **No ejecutar ninguna celda que reinstale / borre ComfyUI**, ni arranque ni workflow antes de esta lectura. Después preparar el opt-in del colector glibc ANTES del primer arranque con backup de los dos archivos en el runtime nuevo y plan exacto de argv/flags; evitar reinicio extra. Tratar como cohorte independiente M009, no usar valores o PID 16744 de la sesión anterior.
+
+
+### M-009 — nueva cuenta Colab, PRE_COMFY baseline confirmado (2026-10-09T06:22:42.256795Z)
+
+**El usuario ejecutó `M009_PRE_COMFY` y el reporte confirma CERO PID Comfy activos**, tras la instalación completa y antes de iniciarlo por primera vez. Registro original en el runtime nuevo `/content/M009_PRE_COMFY.json` (efímero).
+- Python **3.13.15**; PyTorch instalado (leído metadata, sin importar): **2.11.0+cu130**; glibc **2.39**.
+- GPU NVML global **Tesla T4, 0 MiB utilizados / 15360 MiB totales**.
+- MemTotal **12.6714 GiB**; MemFree **0.2593 GiB**; MemAvailable **11.2450 GiB**; Cached **10.5967 GiB**; AnonPages **0.8512 GiB**; Shmem **0.0050 GiB**; SReclaimable **0.5474 GiB**.
+- `/content/ComfyUI/main.py` existe. Comfy git **b0b743566f65daafc423b4fea8a2fbda94b3384a** (el tag/version de Comfy se verificará tras el primer arranque).
+- Plugin instalado `/content/ComfyUI/custom_nodes/ComfyUI-WorkflowDirector`, git **62d43b1ddb169deba69135d5c7ebbd420d1ba5e0** y **sin cambios locales**. `workflowdirector/allocator_diagnostics.py` aún **no instalado**.
+- CUIDADO: MemFree=0.2593GiB no es una alarma por sí solo porque Cached=10.5967GiB y MemAvailable=11.245GiB; Linux puede recuperar páginas de caché. Estas cifras son globales del sistema, no PSS de Comfy (aún no ejecutado).
+
+**Siguiente:** instalar *antes del primer arranque* sólo dos ficheros del commit de código ya validado `5acde78b92343a4e29a8ad9f142b2526d182098b` (`workflowdirector/routes.py` sha1 blob `e16a6f49e9e0e1adbab3e1c8677e502268207c8c`; `workflowdirector/allocator_diagnostics.py` blob `ebc806b4989ba956d7b0f369943ea68e432cbefa`), previa copia de seguridad y revisión de proceso ausente. Activar el opt-in `WORKFLOWDIRECTOR_GLIBC_DIAGNOSTICS=1` en el entorno del proceso de arranque. Nunca ejecutar celdas de instalación que borren Comfy después. La instalación no se considera realizada hasta que el usuario confirme salida.
