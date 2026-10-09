@@ -97,6 +97,24 @@ class UniversalVisualWorkflowFilesTests(unittest.TestCase):
             self.assertEqual(nodes[source]["outputs"][source_slot]["links"], [1])
             self.assertEqual(nodes[dest]["inputs"][dest_slot]["link"], 1)
 
+    def test_cleanup_example_runs_independent_native_chain_without_context(self):
+        c = json.loads((HERE / "cleanup_between_A_B_C.json").read_text())
+        kinds = [n["type"] for n in c["nodes"]]
+        self.assertEqual(
+            kinds, ["EmptyImage", "MemoryStatus", "MemoryManager",
+                    "RAMCleanup", "SaveImage"],
+        )
+        self.assertFalse(any("Context" in kind for kind in kinds))
+        self.assertEqual(c["last_node_id"], 5)
+        self.assertEqual(c["last_link_id"], 4)
+        self.assertEqual(len(c["links"]), 4)
+        nodes = {node["id"]: node for node in c["nodes"]}
+        for link_id, origin, output_slot, target, input_slot, _ in c["links"]:
+            self.assertEqual(nodes[origin]["outputs"][output_slot]["links"], [link_id])
+            self.assertEqual(nodes[target]["inputs"][input_slot]["link"], link_id)
+        self.assertEqual(nodes[3]["widgets_values"], [True] * 5)
+        self.assertEqual(nodes[4]["widgets_values"], [True, True, True, 3])
+
 
 if __name__ == "__main__":
     unittest.main()
