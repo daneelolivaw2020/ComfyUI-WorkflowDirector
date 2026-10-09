@@ -167,3 +167,25 @@ Salida reportada del Colab del usuario:
 - No se han realizado nuevos unloads, instalaciones ni reinicios en este reporte.
 
 **Decisión:** conservar el log original; iniciar una nueva captura externa M-002 antes del trabajo, verificar VRAM/health y memoria disponible de nuevo justo antes de A/B; si las condiciones cambian, no ejecutar. Marcar PRE_AB_2 / POST_AB_2 / POST_AB_2_SETTLED, usar los workflows originales sin modificación y anotar IDs nativos. Este registro es preparación, NO un resultado de M-002.
+
+
+### M-002 — POST_AB_2 y POST_AB_2_SETTLED (datos Colab, 2026-10-09 UTC / 2026-10-08 CDMX)
+
+Salida de la celda `mark_m002` suministrada por el usuario; **no se aportaron aún PRE_AB_2, IDs/estados de A y B, ni la traza M-002 completa**:
+
+| Métrica | M-001 POST_AB_SETTLED | M-002 POST_AB_2 | M-002 POST_AB_2_SETTLED | Δ finales M-002 menos M-001 |
+|---|---:|---:|---:|---:|
+| RSS Comfy GiB | 2.829 | 2.512 | 2.512 | -0.317 |
+| PSS Comfy GiB | 2.813 | 2.499 | 2.499 | -0.314 |
+| PSS_Anon GiB | 2.311 | 2.378 | 2.378 | +0.067 (~69 MiB) |
+| PSS_File GiB | 0.488 | 0.107 | 0.107 | -0.381 (~390 MiB) |
+| VRAM GPU global MiB | 189 | 189 | 189 | 0 |
+
+- `POST_AB_2` marcado por muestra `2026-10-09T05:27:51.853193Z`.
+- `POST_AB_2_SETTLED` marcado por muestra `2026-10-09T05:28:51.586367Z`.
+- La estabilidad de RSS y PSS_Anon en dos muestras separadas ~60s **no prueba ausencia de variación entre ellas** sin leer la serie completa.
+- RSS/PSS totales menores al post M-001 se explican fundamentalmente por un PSS_File inferior. **PSS_Anon residual aumenta 0.067 GiB**; no afirmar "no hay fuga", "RAM completamente reutilizada" ni crecimiento monótono sin una tercera corrida y revisión de la serie.
+- El descenso de PSS_File puede deberse a cambios de residencia de páginas file-backed, pero no atribuir causalmente sin `smaps`/ruta de mapeo. Comparar PRE_AB_2 y picos antes de sacar conclusiones.
+- El usuario aún no confirmó explícitamente IDs de trabajos/estado terminal en M-002 (sí aportó las marcas POST).
+
+**Siguiente acción única:** obtener `PRE_AB_2`, min/max y actividad por fases de la traza completa M-002 y vincularla a la ejecución A/B antes de decidir M-003 vs D2 ProfilerX. Mantener Context pausado y evitar unload/destrucción.
