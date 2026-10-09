@@ -48,3 +48,5 @@ Pruebas previas compartidas verbalmente:
 - Universal CONDITIONING: `Run 3caa60f9-2649-4ee1-9132-39f5bcc993d8`, `phase completed`, Context `demo.conditioning | VALUE | 135 bytes`, con sink verificando embeddings/pooled/metadatos.
 
 **Siguiente prueba de mayor valor:** transferir un socket personalizado *real* de una extensión instalada cuyo contenido sea una estructura copiable, usando los mismos PUT/GET; y una prueba negativa con objeto opaco para confirmar rechazo seguro (sin intentar preservar modelos vivos).
+
+- **Actualización de pruebas manuales reportadas por el usuario:** STRING, INT y FLOAT funcionan correctamente con los nodos universales en ComfyUI/Colab. No se adjuntaron run IDs, logs o verificadores específicos para estas tres pruebas; se registran como observaciones del usuario, no como fixtures automatizados adicionales.
