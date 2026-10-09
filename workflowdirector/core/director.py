@@ -183,6 +183,7 @@ class DirectorEngine:
                 try:
                     published_keys = self._context.commit_step(job_id)
                     record.context_manifest = self._context.manifest()
+                    record.context_inspection = self._context.inspect()["committed"]
                     record.event(
                         "context_committed",
                         step_id=step.step_id,
