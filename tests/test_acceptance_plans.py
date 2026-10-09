@@ -12,7 +12,7 @@ spec.loader.exec_module(probe)
 
 class AcceptancePlansTests(unittest.TestCase):
     def test_all_plans_use_two_distinct_jobs_and_workflow_ids(self):
-        for case in ("string", "image", "latent", "failure"):
+        for case in ("string", "image", "latent", "failure", "universal_image"):
             with self.subTest(case=case):
                 steps, expected = probe.plans(case)
                 self.assertEqual(len(steps), 2)
@@ -63,6 +63,16 @@ class AcceptancePlansTests(unittest.TestCase):
                 }]
             }
         }), 2.7929)
+
+    def test_universal_image_uses_generic_put_and_get_nodes(self):
+        steps, (key, kind, prefix) = probe.plans("universal_image")
+        self.assertEqual((key, kind), ("accept.universal", "VALUE"))
+        a, b = [s["prompt"] for s in steps]
+        self.assertEqual(a["2"]["class_type"], "WorkflowDirectorContextPutUniversal")
+        self.assertEqual(a["2"]["inputs"]["value"], ["1", 0])
+        self.assertEqual(b["1"]["class_type"], "WorkflowDirectorContextGetUniversal")
+        self.assertEqual(b["2"]["class_type"], "SaveImage")
+        self.assertTrue(prefix.startswith("WD_Acceptance_UNIVERSAL_"))
 
     def test_failure_plan_only_validated_when_a_fails(self):
         steps, meta = probe.plans("failure")
