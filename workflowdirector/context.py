@@ -106,6 +106,50 @@ class ContextSession:
     total_bytes: int = 0
 
 
+def _describe_context_shape(value: Any, depth: int = 0) -> dict[str, Any]:
+    """Metadata only: no strings, scalars, tensor contents or arbitrary reprs.
+
+    Only inspect exact built-in container classes and exact Torch Tensor, so
+    objects cannot execute user-defined __repr__/iteration/attribute hooks.
+    This is intentionally shallow to cap UI/HTTP response size.
+    """
+    kind = type(value)
+    if value is None:
+        return {"kind": "none"}
+    if kind in (str, bytes, bytearray, int, float, bool):
+        return {"kind": kind.__name__}
+    # Import Torch only for values already stored; normally it is loaded by
+    # the codec, not by the Context service startup path.
+    if kind.__module__ == "torch" and kind.__name__ == "Tensor":
+        return {
+            "kind": "tensor",
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "device": value.device.type,
+        }
+    if depth >= 3:
+        return {"kind": kind.__name__, "truncated": True}
+    if kind is dict:
+        # Only exact dicts holding string keys enter universal storage.
+        shown = list(value.items())[:8]
+        return {
+            "kind": "dict", "length": len(value),
+            "fields": {
+                str(key): _describe_context_shape(child, depth + 1)
+                for key, child in shown
+            },
+            "truncated": len(value) > len(shown),
+        }
+    if kind in (list, tuple):
+        shown = value[:4]
+        return {
+            "kind": kind.__name__, "length": len(value),
+            "items": [_describe_context_shape(child, depth + 1) for child in shown],
+            "truncated": len(value) > len(shown),
+        }
+    return {"kind": "opaque"}
+
+
 class ContextRegistry:
     """One active run, one active job and one atomic committed Context.
 
@@ -282,6 +326,35 @@ class ContextRegistry:
             return {
                 key: {"type": entry.kind, "bytes": entry.size_bytes}
                 for key, entry in session.values.items()
+            }
+
+    def inspect(self) -> dict[str, Any]:
+        """Bounded, read-only structural view; never expose payload values.
+
+        Safe to call during an active run, including between native jobs. The
+        registry lock ensures each snapshot belongs to one committed version.
+        Staged writes stay invisible until their native job is COMPLETED.
+        """
+        with self._lock:
+            session = self._session
+            if session is None:
+                return {
+                    "active": False, "run_id": None, "active_job_id": None,
+                    "committed": {}, "total_bytes": 0,
+                }
+            return {
+                "active": True,
+                "run_id": session.run_id,
+                "active_job_id": session.active_job_id,
+                "committed": {
+                    key: {
+                        "type": entry.kind,
+                        "bytes": entry.size_bytes,
+                        "shape": _describe_context_shape(entry.value),
+                    }
+                    for key, entry in session.values.items()
+                },
+                "total_bytes": session.total_bytes,
             }
 
     def _require_session(self) -> ContextSession:
