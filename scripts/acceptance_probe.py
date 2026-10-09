@@ -308,6 +308,13 @@ def run_case(case, *, max_seconds=120):
     evidence = None
     if not expected_failed and len(attempts) > 1:
         evidence = history_evidence(attempts[1]["job_id"], expected_fragment)
+    # The no-model CONDITIONING gate must prove the sink actually verified
+    # the tensor/metadata payload, not merely that native jobs completed.
+    conditioning_integrity_ok = (
+        case != "universal_conditioning"
+        or bool(evidence and evidence.get("job_present")
+                and evidence.get("expected_fragment_found"))
+    )
 
     data = {
         "case": case, "run_id": rid, "phase": phase,
@@ -319,7 +326,7 @@ def run_case(case, *, max_seconds=120):
         } for a in attempts],
         "context_manifest": manifest,
         "history_evidence": evidence,
-        "success": good_phase and good_attempts and context_ok,
+        "success": good_phase and good_attempts and context_ok and conditioning_integrity_ok,
         "end_rss_gib": last_step_rss(status),
     }
     previous = []
