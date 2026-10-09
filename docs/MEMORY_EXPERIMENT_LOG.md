@@ -388,3 +388,10 @@ El usuario confirma que la nueva sesión de Colab pertenece a **otra cuenta**, p
 - CUIDADO: MemFree=0.2593GiB no es una alarma por sí solo porque Cached=10.5967GiB y MemAvailable=11.245GiB; Linux puede recuperar páginas de caché. Estas cifras son globales del sistema, no PSS de Comfy (aún no ejecutado).
 
 **Siguiente:** instalar *antes del primer arranque* sólo dos ficheros del commit de código ya validado `5acde78b92343a4e29a8ad9f142b2526d182098b` (`workflowdirector/routes.py` sha1 blob `e16a6f49e9e0e1adbab3e1c8677e502268207c8c`; `workflowdirector/allocator_diagnostics.py` blob `ebc806b4989ba956d7b0f369943ea68e432cbefa`), previa copia de seguridad y revisión de proceso ausente. Activar el opt-in `WORKFLOWDIRECTOR_GLIBC_DIAGNOSTICS=1` en el entorno del proceso de arranque. Nunca ejecutar celdas de instalación que borren Comfy después. La instalación no se considera realizada hasta que el usuario confirme salida.
+
+
+### M-009 — glibc diagnóstico preparado en nueva cuenta ANTES del primer arranque (2026-10-09 UTC)
+Salida del usuario:
+- `M-009 DIAGNOSTICO PREPARADO` — backup original `/content/WD_M009_BACKUP_20261009_062506`; exactamente dos archivos instalados/verificados por blobs: `M workflowdirector/routes.py`, `?? workflowdirector/allocator_diagnostics.py`.
+- `WORKFLOWDIRECTOR_GLIBC_DIAGNOSTICS=1` presente en `os.environ` del notebook; **todavía no se ha iniciado ComfyUI**, por tanto opt-in efectivo en el proceso y endpoint sin verificar. Git base sigue en `62d43b1...` con modificaciones esperadas.
+- Próxima acción: utilizar **la celda de arranque habitual del usuario** sin alterar su ruta de salida, Comfy flags, modelo, Python, Torch/CUDA o módulos; asegurar que el proceso hijo herede la env `WORKFLOWDIRECTOR_GLIBC_DIAGNOSTICS=1`, incluso si la celda fabrica explícitamente otro `env`. Después, **antes de ningún workflow**, comprobar health, `/queue`, endpoint `/workflowdirector/memory/glibc`, proceso/PID, y `/proc/<pid>/smaps_rollup`, `/proc/meminfo`. Guardar `M009_COMFY_COLD.json` y comparar con `M009_PRE_COMFY.json` sin mezclar ambientes.
