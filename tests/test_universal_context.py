@@ -69,11 +69,12 @@ class UniversalContextTests(unittest.TestCase):
         store.start_run("r")
         store.begin_step("r", "A", "a")
         store.stage("a", "positive.conditioning", "VALUE", original)
+        self.assertEqual(store.manifest(), {})  # Staged entries must remain invisible.
+        self.assertTrue(FakeTensor.transfer_count >= 2)
+        store.commit_step("a")
         self.assertEqual(store.manifest()["positive.conditioning"]["type"], "VALUE")
         self.assertEqual(store.manifest()["positive.conditioning"]["bytes"],
                          self.codec.estimate_size("VALUE", original))
-        self.assertTrue(FakeTensor.transfer_count >= 2)
-        store.commit_step("a")
         original[0][0].values[0] = 999
         store.begin_step("r", "B", "b")
         first = store.read_any("b", "positive.conditioning")
