@@ -15,6 +15,8 @@ const state = {
   announcedEvents: new Set(),
   monitoringUncertain: false,
   statusWarning: "",
+  liveContext: null,
+  syncedRunId: null,
 };
 
 function notify(severity, summary, detail = "") {
@@ -175,6 +177,120 @@ async function prepareCurrentSteps(slots) {
     await openTabAndCompile(previousPath, previousId);
   }
   return prepared;
+}
+
+const PUT_NODE_PREFIX = "WorkflowDirectorContextPut";
+
+function plannedContextKeys() {
+  // The live Context is empty before the Director starts. Offer keys from
+  // linked producers as choices for configuring GET before A has run.
+  const keys = new Set();
+  for (const step of [state.A, state.B, ...state.currentSteps]) {
+    const prompt = step?.prompt ?? {};
+    for (const node of Object.values(prompt)) {
+      if (!node?.class_type?.startsWith(PUT_NODE_PREFIX)) continue;
+      const key = node?.inputs?.key;
+      if (typeof key === "string" && key.trim() === key && key) keys.add(key);
+    }
+  }
+  return [...keys].sort();
+}
+
+function availableContextKeys() {
+  return [...new Set([
+    ...plannedContextKeys(),
+    ...Object.keys(state.liveContext?.committed ?? {}),
+    ...Object.keys(state.lastRun?.record?.context_manifest ?? {}),
+  ])].sort();
+}
+
+async function inspectLiveContext() {
+  const response = await api.fetchApi("/workflowdirector/context", { cache: "no-store" });
+  if (!response.ok) throw new Error("Context inspection HTTP " + response.status);
+  state.liveContext = await response.json();
+  refreshAllPanels();
+  return state.liveContext;
+}
+
+function describeShape(shape) {
+  if (!shape || typeof shape !== "object") return "";
+  if (shape.kind === "tensor") {
+    return "Tensor [" + (shape.shape ?? []).join("×") + "] " + (shape.dtype ?? "");
+  }
+  if (shape.kind === "dict") {
+    return "dict {" + Object.keys(shape.fields ?? {}).join(", ") +
+      (shape.truncated ? ", …" : "") + "}";
+  }
+  if (shape.kind === "list" || shape.kind === "tuple") {
+    return shape.kind + " (" + shape.length + " elements)";
+  }
+  return String(shape.kind ?? "");
+}
+
+async function synchronizeTerminalOutputs(run) {
+  // Comfy's executed websocket handler resolves node IDs against the currently
+  // mounted canvas. Fast A→B jobs can finish before the Lab switches tabs.
+  // Recover the canonical output metadata from /history after native success.
+  if (!state.followActive || run?.record?.phase !== "completed") return;
+  const runId = run?.run_id ?? state.lastRunId;
+  if (!runId || state.syncedRunId === runId) return;
+  const attempts = run.record.attempts ?? [];
+  const last = attempts[attempts.length - 1];
+  if (!last || last.state !== "completed" || !last.job_id) return;
+  const step = state.currentSteps.find((x) => x.step_id === last.step_id);
+  if (!step?.tab_path || !findWorkflowTab(step.tab_path)) return;
+  const response = await api.fetchApi(
+    "/history/" + encodeURIComponent(last.job_id), { cache: "no-store" }
+  );
+  if (!response.ok) throw new Error("Comfy history HTTP " + response.status);
+  const history = await response.json();
+  const result = history?.[last.job_id];
+  if (!result || result?.status?.status_str !== "success") {
+    throw new Error("Native history not yet available for completed job " + last.job_id);
+  }
+  // Never apply output IDs from B to the canvas for A (or another workflow).
+  await openTabAndCompile(step.tab_path, step.workflow_id);
+  const outputs = result.outputs ?? {};
+  app.nodeOutputs = outputs;
+  for (const [id, output] of Object.entries(outputs)) {
+    const node = app.graph?.getNodeById?.(Number(id));
+    if (node?.onExecuted) node.onExecuted(output);
+  }
+  app.canvas?.setDirty?.(true, true);
+  state.syncedRunId = runId;
+}
+
+async function safelySynchronizeOutputs(run) {
+  try {
+    await synchronizeTerminalOutputs(run);
+  } catch (error) {
+    // Presentation must never overwrite the successful Director run state.
+    console.warn("[WorkflowDirector] Could not restore visual outputs", error);
+    notify("warn", "Workflow results available in history",
+      "The native job completed, but the visible node outputs were not restored.");
+  }
+}
+
+function attachGetKeySelector(node) {
+  if (!node?.addWidget || !node.widgets) return;
+  const keyWidget = node.widgets.find((widget) => widget.name === "key");
+  if (!keyWidget || node.widgets.some((widget) => widget.name === "context_key_picker")) return;
+  const empty = "Choose Context key…";
+  const options = {};
+  Object.defineProperty(options, "values", {
+    enumerable: true,
+    get: () => [empty, ...availableContextKeys()],
+  });
+  const picker = node.addWidget("combo", "context_key_picker", empty, (chosen) => {
+    if (!chosen || chosen === empty) return;
+    keyWidget.value = chosen;
+    node.setDirtyCanvas?.(true, true);
+    app.graph?.change?.();
+  }, options);
+  // Selector is UI convenience only; the original 'key' remains the sole API
+  // input and can be typed/linked manually. Never put ephemeral combo state
+  // into Comfy's API prompt.
+  picker.serialize = false;
 }
 
 function announceStepEvents(run) {
@@ -372,6 +488,12 @@ async function fetchRunStatus(runId) {
     state.statusWarning = "";
   }
   announceStepEvents(statusBody);
+  // Best effort: metadata only, while this run owns Context.
+  if (statusBody?.record?.phase === "running") {
+    try { await inspectLiveContext(); } catch (error) {
+      console.warn("[WorkflowDirector] Context inspector unavailable", error);
+    }
+  }
   refreshAllPanels();
   return statusBody;
 }
@@ -381,6 +503,9 @@ async function refreshLastRun() {
     throw new Error("No WorkflowDirector run has been started in this tab.");
   }
   const result = await fetchRunStatus(state.lastRunId);
+  if (result?.record?.phase === "completed") {
+    await safelySynchronizeOutputs(result);
+  }
   if (!["completed", "failed", "cancelled"].includes(result?.record?.phase)) {
     state.statusWarning =
       "The backend run is still active or not terminal. Do not start another run.";
@@ -409,6 +534,8 @@ async function startRun(steps) {
   try {
     const preparedSteps = await prepareCurrentSteps(steps);
     state.currentSteps = preparedSteps;
+    state.syncedRunId = null;
+    state.liveContext = null;
     state.announcedEvents = new Set();
     state.statusWarning = "";
     // Preassign and retain the run UUID before submission so a lost HTTP
@@ -474,6 +601,7 @@ async function startRun(steps) {
 
       const phase = statusBody?.record?.phase;
       if (["completed", "failed", "cancelled"].includes(phase)) {
+        if (phase === "completed") await safelySynchronizeOutputs(statusBody);
         state.isRunning = false;
         refreshAllPanels();
         notify(
@@ -666,6 +794,57 @@ function renderPanel(root) {
     root.appendChild(table);
   }
 
+  const explorerTitle = document.createElement("div");
+  explorerTitle.textContent = "Context explorer · metadata only";
+  explorerTitle.style.marginTop = "12px";
+  explorerTitle.style.fontWeight = "600";
+  root.appendChild(explorerTitle);
+  const help = document.createElement("div");
+  help.style.fontSize = "12px";
+  help.textContent = "Planned keys come from linked PUT nodes; committed keys from " +
+    "the active run or last run snapshot. Values are never exposed. " +
+    "Completed runs release their Context.";
+  root.appendChild(help);
+  const contextActions = document.createElement("div");
+  contextActions.style.margin = "6px 0";
+  contextActions.appendChild(
+    button("Refresh live Context", () => inspectLiveContext())
+  );
+  root.appendChild(contextActions);
+  const planned = new Set(plannedContextKeys());
+  const live = state.liveContext?.active
+    ? state.liveContext.committed ?? {} : {};
+  const last = record.context_inspection ?? {};
+  const keys = availableContextKeys();
+  if (!keys.length) {
+    const empty = document.createElement("div");
+    empty.textContent = "No Context keys found yet. Link a workflow containing PUT.";
+    empty.style.fontSize = "12px";
+    root.appendChild(empty);
+  } else {
+    const explorer = document.createElement("table");
+    explorer.style.width = "100%";
+    explorer.style.fontSize = "12px";
+    for (const key of keys) {
+      const meta = live[key] ?? last[key] ?? committedContext[key];
+      const phase = live[key] ? "LIVE committed" :
+        committedContext[key] ? "Last run (released)" :
+        planned.has(key) ? "Planned by PUT" : "Unknown";
+      const row = document.createElement("tr");
+      const fields = [key, phase,
+        meta ? (meta.type + " · " + meta.bytes + " bytes") : "",
+        describeShape(meta?.shape)];
+      for (const value of fields) {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        cell.style.padding = "4px 7px";
+        row.appendChild(cell);
+      }
+      explorer.appendChild(row);
+    }
+    root.appendChild(explorer);
+  }
+
   const summary = run.memory_summary;
   if (summary?.baseline_found) {
     const title = document.createElement("div");
@@ -681,6 +860,16 @@ function renderPanel(root) {
 function refreshAllPanels() {
   for (const panel of mountedPanels) renderPanel(panel);
 }
+
+app.registerExtension({
+  name: "WorkflowDirector.ContextKeyPicker",
+  nodeCreated(node) {
+    if (node?.comfyClass === "WorkflowDirectorContextGetUniversal" ||
+        node?.type === "WorkflowDirectorContextGetUniversal") {
+      attachGetKeySelector(node);
+    }
+  },
+});
 
 app.registerExtension({
   name: "WorkflowDirector.Lab",
