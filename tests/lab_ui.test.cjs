@@ -12,11 +12,13 @@ const vm = require("node:vm");
 const source = fs.readFileSync("web/workflow_director_lab.js", "utf8")
   .replace(/^import \{.*\} from .*;\s*$/gm, "") +
   "\nglobalThis.__lab = { state, capture, prepareCurrentSteps, " +
-  "openTabAndCompile, selectedWorkflowTab, announceStepEvents, startRun };";
+  "openTabAndCompile, selectedWorkflowTab, announceStepEvents, startRun, " +
+  "availableContextKeys, plannedContextKeys, attachGetKeySelector, synchronizeTerminalOutputs };";
 
 function makeEnvironment(config = {}) {
   const tabs = new Map();
   const toasts = [];
+  const extensions = [];
   let activePath = null;
 
   function makeTab(path, name, id, seed = 1) {
@@ -47,7 +49,7 @@ function makeEnvironment(config = {}) {
 
   const app = {
     extensionManager: { toast: { add: (entry) => toasts.push(entry) } },
-    registerExtension() {},
+    registerExtension(extension) { extensions.push(extension); },
     async graphToPrompt() {
       const tab = tabs.get(activePath);
       if (!tab) throw new Error("tab missing");
@@ -64,6 +66,18 @@ function makeEnvironment(config = {}) {
   const api = {
     clientId: "test",
     async fetchApi(path, options) {
+      if (path.startsWith("/history/")) {
+        const id = path.split("/").pop();
+        return { ok: true, json: async () => ({
+          [id]: { status: { status_str: "success" },
+            outputs: config.historyOutputs ?? {} },
+        }) };
+      }
+      if (path === "/workflowdirector/context") {
+        return { ok: true, json: async () => ({
+          active: true, committed: config.committed ?? {},
+        }) };
+      }
       if (options?.method === "POST") {
         const request = JSON.parse(options.body);
         posted.push(request);
@@ -86,7 +100,7 @@ function makeEnvironment(config = {}) {
   };
   vm.runInNewContext(source, sandbox, { filename: "workflow_director_lab.js" });
   return {
-    lab: sandbox.__lab, toasts, tabs, posted, makeTab,
+    lab: sandbox.__lab, toasts, tabs, posted, extensions, app, makeTab,
     select(path) { activePath = path; },
     active() { return activePath; },
   };
@@ -264,4 +278,102 @@ test("Run B only fails closed when B tab is closed", async () => {
     /closed or missing/
   );
   assert.equal(e.posted.length, 0);
+});
+
+
+test("GET picker offers keys from captured PUT without waiting for a run", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "A", "id-A");
+  await e.lab.capture("A");
+  e.lab.state.A.prompt = {
+    "1": {
+      class_type: "WorkflowDirectorContextPutUniversal",
+      inputs: { key: "demo.image" },
+    },
+    "2": {
+      class_type: "WorkflowDirectorContextPutString",
+      inputs: { key: "demo.prompt" },
+    },
+  };
+  assert.deepEqual(Array.from(e.lab.plannedContextKeys()),
+    ["demo.image", "demo.prompt"]);
+  assert.deepEqual(Array.from(e.lab.availableContextKeys()),
+    ["demo.image", "demo.prompt"]);
+
+  const widgets = [{ name: "key", value: "shared" }];
+  const node = {
+    comfyClass: "WorkflowDirectorContextGetUniversal",
+    widgets,
+    addWidget(kind, name, value, cb, options) {
+      const widget = { name, value, callback: cb, options };
+      widgets.push(widget);
+      return widget;
+    },
+  };
+  const pickerExt = e.extensions.find(
+    x => x.name === "WorkflowDirector.ContextKeyPicker");
+  pickerExt.nodeCreated(node);
+  assert.equal(widgets.length, 2);
+  assert.ok(widgets[1].options.values.includes("demo.image"));
+  widgets[1].callback("demo.image");
+  assert.equal(widgets[0].value, "demo.image",
+    "the actual GET key widget is changed");
+  assert.equal(widgets[1].serialize, false);
+  pickerExt.nodeCreated(node);
+  assert.equal(widgets.length, 2, "never duplicate selector on load");
+});
+
+test("Context inspector never supplies a live payload; completed run keys remain labeled snapshots", async () => {
+  const e = makeEnvironment();
+  e.lab.state.lastRun = { record: {
+    context_manifest: { "demo.mystery": { type: "VALUE", bytes: 142 } },
+  } };
+  assert.ok(e.lab.availableContextKeys().includes("demo.mystery"));
+  // A new native Director run must not reuse the old key's value.
+  e.lab.state.lastRun = null;
+  assert.equal(e.lab.availableContextKeys().includes("demo.mystery"), false);
+});
+
+test("completed fast B restores PreviewImage metadata into the correct active canvas", async () => {
+  const image = { filename: "preview.png", subfolder: "", type: "temp" };
+  const e = makeEnvironment({
+    historyOutputs: { "3": { images: [image] } },
+  });
+  e.makeTab("temp/A", "A", "id-A");
+  e.makeTab("temp/B", "B", "id-B");
+  e.lab.state.lastRunId = "run-1";
+  e.lab.state.currentSteps = [
+    { step_id: "A", name: "A", tab_path: "temp/A", workflow_id: "id-A" },
+    { step_id: "B", name: "B", tab_path: "temp/B", workflow_id: "id-B" },
+  ];
+  const run = { run_id: "run-1", record: {
+    phase: "completed",
+    attempts: [{
+      step_id: "B", job_id: "job-B", state: "completed",
+    }],
+  } };
+  await e.lab.synchronizeTerminalOutputs(run);
+  assert.equal(e.active(), "temp/B");
+  assert.equal(e.app.nodeOutputs["3"].images[0].filename, "preview.png");
+  assert.equal(e.lab.state.syncedRunId, "run-1");
+});
+
+test("do not apply B image outputs to A when followActive is disabled", async () => {
+  const e = makeEnvironment({ historyOutputs: {
+    "3": { images: [{ filename: "wrong-graph.png" }] },
+  } });
+  e.makeTab("temp/A", "A", "id-A");
+  e.makeTab("temp/B", "B", "id-B");
+  e.lab.state.followActive = false;
+  e.lab.state.currentSteps = [
+    { step_id: "B", tab_path: "temp/B", workflow_id: "id-B" },
+  ];
+  await e.lab.synchronizeTerminalOutputs({
+    run_id: "run-1",
+    record: { phase: "completed", attempts: [
+      { step_id: "B", job_id: "job-B", state: "completed" },
+    ] },
+  });
+  assert.equal(e.active(), "temp/A");
+  assert.equal(e.app.nodeOutputs["3"], undefined);
 });
