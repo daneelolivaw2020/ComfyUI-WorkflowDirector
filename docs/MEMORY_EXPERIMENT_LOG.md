@@ -139,3 +139,18 @@ El usuario ejecutó `mark("POST_AB")` a `2026-10-09T05:05:22.108350+00:00` y `ma
 **Interpretación provisional:** dos intervalos de uso intenso GPU (~12 GiB), un pico tardío de RSS/PSS del proceso (~8.9 GiB), y caída importante al estado residual RSS 2.829 / Pss_Anon 2.311 GiB. El residuo anónimo está ~1.592 GiB por encima de BASELINE, mantenido entre dos muestras a 15 segundos. No prueba fuga ni irreversibilidad. File-backed PSS alcanzó 5.475 GiB transitoriamente, así que la atribución a mmap GGUF sigue abierta para ese pico **aunque el aumento residual final sea anónimo**. Etiquetar cada intervalo A o B requiere IDs y timestamps del servicio; aun cuando el orden sea Q4→Q6, las fronteras precisas aún no están verificadas.
 
 **Riesgo y siguiente control:** antes de repetir D1 confirmar disponibilidad de RAM del cgroup/proceso y estado idle. Repetir corrida equivalente solo si hay margen, con una marca PRE_AB_2 y POST_AB_2, y evaluar si el residuo anónimo crece de nuevo o se estabiliza; alternativamente extraer JSONL completo y timestamps de trabajos existentes antes de nuevas cargas. Evitar cleanup manual, `/free`, reinstalaciones, cambios de cache flags y ProfilerX hasta completar el baseline.
+
+
+### M-001 — Análisis íntegro del ZIP recibido (524 muestras)
+
+Se recibió el ZIP original `M001_memory_AB.zip` en la conversación (incluye traza y marcas) y se inspeccionó íntegramente sin conectar a Colab ni alterar el proceso. Documentación forense de continuidad:
+**[MEMORY_M001_TRACE_ANALYSIS_2026-10-08.md](MEMORY_M001_TRACE_ANALYSIS_2026-10-08.md)**.
+
+Resultados adicionales a las muestras puntuales anteriores:
+- 524 muestras consecutivas (04:51:23–05:09:26Z), cadencia mediana 2.056 s, sin brechas >3s, PID Comfy 16744 en todas.
+- Actividad intensa GPU primera 05:00:50–05:02:04Z (pico 12121 MiB) y segunda 05:02:31–05:04:08Z (pico 12029 MiB); **son bloques heurísticos, no IDs de A/B**.
+- Entre ambas, VRAM global llegó a 189 MiB y RSS bajó a 2.810 GiB (05:02:06Z), luego comenzó a crecer por nuevas operaciones. El residuo final RSS 2.829 GiB es comparable; no evidencia de aumento monotónico por la segunda actividad.
+- Después de 05:04:10Z hay **~5m16s de estabilidad** hasta 05:09:26Z: RSS 2.8291 GiB; PSS_Anon 2.3114 GiB; GPU global 189 MiB. Esto extiende la observación de estabilidad inicial de 15 segundos.
+- Pico de file-backed PSS 5.475 GiB transitorio, distinto en tiempo del pico anónimo 7.138 GiB. Residuo final respecto al baseline: PSS_Anon +1.592 GiB, PSS_File -0.024 GiB. Memoria anónima retenida, **causa no atribuida, NO denominar fuga**.
+- Ambos trabajos reportados completados correctamente. Faltan prompt/run IDs y tiempos exactos; no está probada ninguna hipótesis H1–H5.
+- **Próxima prueba M-002:** verificar cgroup RAM disponible y proceso idle; repetir A→B sin reinicio ni cambios, con marcas adicionales y tiempos IDs; comprobar si el estado POST_AB vuelve ~2.829 GiB RSS / 2.311 GiB PSS_Anon o sigue aumentando. No instalar ProfilerX antes de segunda baseline.
