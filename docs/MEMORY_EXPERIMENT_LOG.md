@@ -334,3 +334,13 @@ Implementado exclusivamente en `feature/memory-diagnostics`:
 - Inicialmente CI falló por un falso positivo de prueba textual (`import torch` en un docstring negativo); corregido inspeccionando AST real, sin cambiar lógica del colector.
 - **CI exitosa**: commit `5acde78b92343a4e29a8ad9f142b2526d182098b`, [Core tests run 37891129776](https://github.com/daneelolivaw2020/ComfyUI-WorkflowDirector/actions/runs/37891129776), matrices Python 3.11 y 3.13 (ambas success). Esto prueba los tests en runners, **no prueba ejecución en el Comfy de Colab**.
 - **Próxima única acción:** clonar ese commit a carpeta de inspección separada en Colab y ejecutar un smoke `capture_allocator()` en un *subproceso Python desechable* para validar la ABI/libc del Colab sin entrar al PID Comfy; luego verificar ruta real/versión del custom node y planificar reinicio sólo de Comfy con los mismos flags, opt-in en entorno, siempre con rollback. No ejecutar A–B todavía, ni alterar instalación validada ni `--cache-none`.
+
+
+### M-007 — Smoke glibc en subproceso aislado de Colab, APROBADO (2026-10-09 UTC)
+Salida aportada por el usuario de prueba del colector desde checkout separado `/content/WorkflowDirector-Glibc-Probe`:
+- **Commit del checkout**: `d61770d6d7c1eeaf8761a022a7c96c465abfa53d` (`feature/memory-diagnostics`, posterior a los tests CI verdes).
+- `subprocess.run([sys.executable, "-c", ...], cwd=TEST_DIR, timeout=20)` ejecutó `capture_allocator()` **en un proceso separado**, no en ComfyUI.
+- **Código de salida: 0**; PID prueba `39290`; `glibc_version="2.39"`; `heap_entries=1`; `arena_system_current_bytes=2416640`; `free_list_estimate_bytes=227400`.
+- Salida `PRUEBA AISLADA CORRECTA`. Confirma llamada nativa y parseo básico del XML en Colab (glibc 2.39). **No prueba** seguridad sobre ComfyUI en vivo ni permite atribuir sus ~818 MiB de heaps alineados.
+- **No modificación de ComfyUI** a partir de esta prueba; sin cambios Torch/CUDA/Context ni llamadas unload/trim.
+- **Próxima acción única**: inspeccionar read-only estado git y ruta del **custom node activo** y mecanismo de arranque/entorno Comfy antes de preparar actualización controlada y reinicio de **sólo el proceso Comfy**. Preservar rama validada y argumentos reales `--cache-none`, `--reserve-vram 0.8`, rutas Drive, etc.; comprobar ausencia de cambios locales antes de desplegar.
