@@ -48,6 +48,14 @@ def _walk(value, *, clone: bool, max_tensor_bytes: int):
             return len(item), bytearray(item) if clone else None
 
         if isinstance(item, torch.Tensor):
+            # Tensor subclasses can override detach/to/clone and carry custom
+            # Python/model state; never execute those methods in the generic
+            # CPU storage path without an explicit reviewed adapter.
+            if type(item) is not torch.Tensor:
+                raise ContextError(
+                    "Universal Context tensor subclasses require a "
+                    "registered safe adapter"
+                )
             if (
                 item.layout != torch.strided
                 or item.is_sparse
