@@ -210,6 +210,75 @@ class ContextRegistryTests(unittest.TestCase):
 
 
 
+    def test_inspection_reports_only_committed_metadata_without_values(self):
+        store = registry()
+        self.assertEqual(
+            store.inspect(),
+            {"active": False, "run_id": None, "active_job_id": None,
+             "committed": {}, "total_bytes": 0},
+        )
+        store.start_run("run")
+        store.begin_step("run", "A", "job-A")
+        store.stage("job-A", "private-key", "STRING", "SECRET-DO-NOT-EXPOSE")
+        self.assertEqual(store.inspect()["committed"], {})
+        store.commit_step("job-A")
+        inspection = store.inspect()
+        self.assertTrue(inspection["active"])
+        self.assertEqual(inspection["run_id"], "run")
+        self.assertEqual(inspection["total_bytes"], len("SECRET-DO-NOT-EXPOSE"))
+        self.assertEqual(
+            inspection["committed"]["private-key"]["shape"],
+            {"kind": "str"},
+        )
+        self.assertNotIn("SECRET-DO-NOT-EXPOSE", repr(inspection))
+        store.end_run("run")
+        self.assertFalse(store.inspect()["active"])
+        self.assertEqual(store.inspect()["committed"], {})
+
+    def test_context_survives_garbage_collection_between_native_jobs(self):
+        """A model/cache cleanup must not release committed Context-owned data."""
+        import gc
+        import weakref
+
+        class Source:
+            pass
+
+        store = registry()
+        store.start_run("run")
+        source = Source()
+        weak = weakref.ref(source)
+        payload = {"data": bytearray(b"safe-context")}
+        store.begin_step("run", "A", "job-A")
+        store.stage("job-A", "payload", "IMAGE", payload)
+        store.commit_step("job-A")
+        payload["data"][:] = b"bad-data-xxx"
+        del source, payload
+        gc.collect()
+        self.assertIsNone(weak())
+        store.begin_step("run", "B", "job-B")
+        self.assertEqual(
+            store.read("job-B", "payload", "IMAGE")["data"],
+            bytearray(b"safe-context"),
+        )
+        store.commit_step("job-B")
+        store.end_run("run")
+
+    def test_context_shape_introspection_truncates_nested_containers(self):
+        from workflowdirector.context import _describe_context_shape
+        sample = {
+            "tensor-like": {"data": [[1, 2, 3]]},
+            "sequence": [1, 2, 3, 4, 5],
+        }
+        shape = _describe_context_shape(sample)
+        self.assertEqual(shape["kind"], "dict")
+        self.assertEqual(shape["fields"]["sequence"]["length"], 5)
+        self.assertTrue(shape["fields"]["sequence"]["truncated"])
+        self.assertEqual(
+            shape["fields"]["sequence"]["items"][0], {"kind": "int"}
+        )
+        self.assertNotIn("1, 2, 3, 4, 5", repr(shape))
+
+
 
 class StaticContextPlanTests(unittest.TestCase):
     def test_duplicate_literal_writers_are_rejected_before_queueing(self):
