@@ -110,3 +110,32 @@ El usuario ejecutó `mark("POST_AB")` a `2026-10-09T05:05:22.108350+00:00` y `ma
 **Monitor:** activo según la salida del usuario; `/content/memory_20261009_045123.jsonl`; marcas `/content/memory_20261009_045123_markers.jsonl`. **Datos faltantes:** archivo JSONL completo, timestamp exacto de cada muestra, IDs/estados terminales de A/B, peak RSS/PSS/VRAM, observaciones Torch allocator antes/después. No se ha instalado ProfilerX ni se ha ejecutado cleanup por el asistente.
 
 **Siguiente acción:** extraer picos y serie temporal de la ventana PRE_AB→POST_AB desde los archivos ya registrados, correlacionar IDs / tiempos y verificar resultado de A y B antes de ensayar ningún remedio o instalar ProfilerX.
+
+
+### M-001 — Picos observados en la serie D1 (resultado reportado por el usuario)
+
+**Fuente:** salida de la celda de análisis del observador `/content/memory_20261009_045123.jsonl`, con los marcadores de `/content/memory_20261009_045123_markers.jsonl`. Datos derivados por el usuario de **218 muestras** en el intervalo desde BASELINE a POST_AB_SETTLED. **Los workflows A y B terminaron correctamente**, sin error reportado. No se entregaron aún IDs de jobs ni el JSONL íntegro.
+
+**Picos muestreados (cada 2 segundos; no necesariamente máximos absolutos)**:
+- RSS máximo: **8.898 GiB**, `2026-10-09T05:03:28.474544+00:00`.
+- PSS máximo: **8.882 GiB**, mismo timestamp.
+- PSS anónima máximo: **7.138 GiB**, `2026-10-09T05:03:59.415631+00:00`.
+- PSS file-backed máximo: **5.475 GiB**, `2026-10-09T05:02:51.272411+00:00`.
+- GPU global máximo: **12121 MiB**, `2026-10-09T05:01:53.466667+00:00`.
+- **Importante**: los máximos ocurren en instantes distintos. No sumar PSS anónima máxima + PSS file máxima ni asumir que el máximo de GPU coincidió con el de RSS.
+
+**Evolución por minuto reportada**, formato `HH:MM:SS RSS inicial→final GiB | Pss_Anon final GiB | pico GPU global MiB`:
+```
+04:57:58 1.26 -> 1.26 | 0.72 |   105
+04:58:58 1.26 -> 1.26 | 0.72 |   105
+04:59:58 1.26 -> 4.28 | 0.88 |  3933
+05:00:58 4.78 -> 3.84 | 2.39 | 12121
+05:01:58 3.82 -> 2.91 | 2.38 |  9945
+05:02:58 2.91 -> 8.67 | 7.14 | 12029
+05:03:58 8.67 -> 2.83 | 2.31 | 12029
+05:04:58 2.83 -> 2.83 | 2.31 |   189
+```
+
+**Interpretación provisional:** dos intervalos de uso intenso GPU (~12 GiB), un pico tardío de RSS/PSS del proceso (~8.9 GiB), y caída importante al estado residual RSS 2.829 / Pss_Anon 2.311 GiB. El residuo anónimo está ~1.592 GiB por encima de BASELINE, mantenido entre dos muestras a 15 segundos. No prueba fuga ni irreversibilidad. File-backed PSS alcanzó 5.475 GiB transitoriamente, así que la atribución a mmap GGUF sigue abierta para ese pico **aunque el aumento residual final sea anónimo**. Etiquetar cada intervalo A o B requiere IDs y timestamps del servicio; aun cuando el orden sea Q4→Q6, las fronteras precisas aún no están verificadas.
+
+**Riesgo y siguiente control:** antes de repetir D1 confirmar disponibilidad de RAM del cgroup/proceso y estado idle. Repetir corrida equivalente solo si hay margen, con una marca PRE_AB_2 y POST_AB_2, y evaluar si el residuo anónimo crece de nuevo o se estabiliza; alternativamente extraer JSONL completo y timestamps de trabajos existentes antes de nuevas cargas. Evitar cleanup manual, `/free`, reinstalaciones, cambios de cache flags y ProfilerX hasta completar el baseline.
