@@ -15,6 +15,7 @@ from .nodes.context_nodes import (
 from .nodes.universal_context_nodes import ContextPutUniversal, ContextGetUniversal
 from .nodes.conditioning_lab import (
     WorkflowDirectorTestConditioningSource, WorkflowDirectorTestConditioningSink,
+    WorkflowDirectorTestConditioningUnsafeSource,
 )
 from .workflowdirector import VERSION as __version__
 
@@ -35,6 +36,7 @@ class WorkflowDirectorExtension(ComfyExtension):
             ContextPutLatent, ContextGetLatent,
             ContextPutUniversal, ContextGetUniversal,
             WorkflowDirectorTestConditioningSource, WorkflowDirectorTestConditioningSink,
+            WorkflowDirectorTestConditioningUnsafeSource,
         ]
 
 
