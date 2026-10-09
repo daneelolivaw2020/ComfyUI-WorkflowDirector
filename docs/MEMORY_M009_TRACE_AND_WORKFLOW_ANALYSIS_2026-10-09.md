@@ -57,3 +57,23 @@ Otros cambios de metadatos (id gráfico, viewport) son editoriales.
 - No hay trazas periódicas de picos RSS para este nuevo runtime ni IDs exactos Comfy; los registros son puntos pre/post.
 - **Próximo paso sin nuevos jobs ni cambio de librerías**: registrar el confusor `CLIPLoaderGGUF.type` y una lectura puntual read-only de `/proc/6177/smaps` para atribuir cuánta PSS/RSS anónima actual cae en heaps secundarios de 64MiB alineados, vs heap principal y otras mmap. Esta prueba solo demuestra geometría/residencia, no dueños ni reclamabilidad.
 - Para encontrar propietarios reales de memoria marcada en uso por glibc, hará falta instrumentación distinta con coste/safety delimitados (allocator hooks en runtime nuevo / ProfilerX para etapas + correlación / revisión referencias de nodes), no `malloc_trim()`, `/free`, `empty_cache()` ni unload ciego. No repetir ciegamente A/B ni tocar Context PR#6.
+
+
+## Post-B: descomposición de VMAs anónimas (pasivo; sin instrumentación in-process adicional)
+
+La celda `/proc/6177/smaps` posterior a B detectó 3007 VMAs y 1609.29 MiB anónimos residentes. El detector de 64 MiB halla 25 regiones candidatas de heaps secundarios, 593.92 MiB anónimos residentes, y `[heap]` principal con 302.31 MiB anónimos residentes; quedan 713.06 MiB no captados por esos dos filtros.
+
+Nueva clasificación de los 713.06 MiB:
+| Clase | MiB anónimos | VMA contados |
+|---|---:|---:|
+| Anónimo sin nombre | **655.46** | 290 |
+| Mapeos con pathname de archivo y páginas privadas COW | **57.48** | 984 |
+| Mapeo especial | **0.12** | 1 |
+
+Regiones anónimas sin nombre mayores (resident/virtual en MiB): 81.9/84.2, 80.3/82.5, 57.2/71.5, 35.4/35.4, 30.0/30.0, 27.6/28.0, 25.6/26.0, 17.3/27.0, 14.7/14.7, 13.2/13.3, 12.0/12.0, 10.8/11.0. Esta clasificación no atribuye el propietario; en particular, **anónimo sin nombre no significa fuera de glibc ni necesariamente memoria no recuperable**. Las 25 regiones son candidatos heurísticos de heaps secundarios, no 25 arenas (glibc 16 arenas en XML). El archivo `/content/M009_OTHER_ANON.json` reside solo en runtime del usuario y debe preservarse.
+
+La implementación concreta de GGUF `city96/ComfyUI-GGUF` en commit fijado llama `GGUFReader(path)` y `torch.from_numpy(tensor.data)` sobre datos mmap: https://github.com/city96/ComfyUI-GGUF/blob/6ea2651e7df66d7585f6ffee804b20e92fb38b8a/loader.py; mecanismo a estudiar, pero **no asociar por inferencia los 655 MiB anónimos a esos mmaps sin pruebas**, pues pesos mmapeados pueden ser file-backed.
+
+### Fin de la clasificación por smaps: cambiar de método, no seguir subdividiendo VMAs
+
+La evidencia de M-009 ya permite afirmar: (1) gran calentamiento CPU tras A, (2) B no produce una segunda subida equivalente (+15.2MiB anon), (3) ausencia de modelos en manager y casi toda VRAM liberada, y (4) crecieron arenas glibc más que sus freelists. Con estas técnicas pasivas no podemos identificar qué pila de llamadas, librería o retainer de Python/native mantiene la memoria asignada, y el proceso podría estar usando cachés legítimas. **No hay todavía prueba de fuga acumulativa lineal**. Próximo experimento se debe diseñar explícitamente para atribución de allocations/retainers, desde inicio en un runtime descartable si requiere instrumentación invasiva; controlar que A/B tengan el mismo `CLIPLoaderGGUF.type=flux2` y preservar los originales intactos. No aplicar `malloc_trim`, `/free`, unload manual ni cambios de CUDA en esta sesión.
