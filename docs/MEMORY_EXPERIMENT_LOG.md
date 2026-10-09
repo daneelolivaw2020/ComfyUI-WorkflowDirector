@@ -273,3 +273,23 @@ Archivo original adjunto en la conversación: `M003_memory_AB.zip`; análisis re
 Tres finales PSS_Anon: **2.311440 → 2.377937 → 2.414989 GiB**; +68 MiB y luego +38 MiB (~+106 MiB total). No hay evidencia de incremento grande sin límite en estas tres corridas, pero tampoco está demostrada la meseta o el propietario de los ~1.696 GiB adicionales desde el BASELINE 0.719 GiB original.
 
 **Decisión:** cerrar pruebas de reproducción D1, no repetir A–B sin un fin discriminativo. **Siguiente paso único:** observar `/proc/16744/smaps` y estado/cgroup del proceso ya inactivo para atribuir resident anonymous a tipos de mapeo ([heap], anon, file COW) sin hooks ni CUDA y sin descargar nada. Más adelante instalar ProfilerX pinned como experimento D2 independiente si hace falta atribución por nodo. Sin IDs nativos A/B aún no se pueden asignar exactamente los bloques GPU.
+
+
+### M-004 — Mapa pasivo de regiones del PID Comfy post-M-003 (2026-10-08 CDMX)
+
+**Fuente:** salida aportada por el usuario de inspección `/proc/16744/smaps` en reposo. Sin intervención sobre el runtime; **3125 regiones inspeccionadas**.
+
+| Clasificación de mapeo (script) | RSS GiB | PSS GiB | Anonymous GiB | Private_Dirty GiB |
+|---|---:|---:|---:|---:|
+| ANON / MMAP | 2.087 | 2.087 | 2.087 | 2.087 |
+| HEAP (`[heap]`) | 0.271 | 0.271 | 0.271 | 0.271 |
+| FILE MAPPING / COW | 0.186 | 0.175 | 0.056 | 0.076 |
+| STACK / OTHER | ~0.000 | ~0.000 | ~0.000 | ~0.000 |
+
+**Comprobación:** anonymous total ~2.414 GiB ≈ PSS_Anon post-M-003 2.415 GiB (diferencia de redondeo). RSS suma ~2.544 GiB ≈ RSS post-M-003 2.545 GiB. La mayor fracción de RAM anónima está en **regiones privadas sin ruta de archivo (2.087 GiB)**, no en el `[heap]` principal (~0.271 GiB).
+
+**Mayores regiones por memoria anónima reportadas:** `[heap]` ~266 MiB, otras `ANON/MMAP` ~83.0, ~81.9, ~80.3 MiB y múltiples regiones `ANON/MMAP` de ~63.0 MiB residentes. Son **regiones**, no objetos ni necesariamente una asignación por región. Las regiones ~63 MiB podrían ser compatibles con heaps secundarios de arena `malloc`/glibc en aplicaciones con múltiples hilos; **HIPÓTESIS NO DEMOSTRADA**. También son posibles otras estrategias allocator y tensores CPU fuera del `[heap]`.
+
+**Relevancia:** atribución VMA ≠ identidad del allocator ni prueba de objeto vivo. No afirmar que los 2.087 GiB sean "fuga" o que se puedan devolver sin riesgo. Comparación con baseline ANTES de M-001 a nivel VMA **no disponible**; no atribuir todo este subtotal al incremento +1.696 GiB desde baseline.
+
+**Siguiente acción única:** inspección más precisa *read-only* de tamaños virtuales, RSS anónima, permisos, vecinos y `VmFlags` de las regiones ~63 MiB, agrupar número y suma RSS. No ejecutar `malloc_trim`, `MALLOC_ARENA_MAX`, `MALLOC_MMAP_THRESHOLD_`, /free ni unload mientras no haya evidencia y una corrida de validación aislada. ProfilerX posterior puede atribuir nodo de crecimiento pero no necesariamente la propiedad CPU final.
