@@ -49,6 +49,21 @@ class AcceptancePlansTests(unittest.TestCase):
         self.assertEqual(b["2"]["class_type"], "SaveLatent")
         self.assertTrue(prefix.startswith("WD_Acceptance_LATENT_"))
 
+    def test_last_step_rss_handles_failure_without_observations(self):
+        self.assertIsNone(probe.last_step_rss({}))
+        self.assertIsNone(probe.last_step_rss({
+            "memory_summary": {"steps": [{"observations": []}]}
+        }))
+        self.assertEqual(probe.last_step_rss({
+            "memory_summary": {
+                "steps": [{
+                    "observations": [{
+                        "metrics": {"process_rss_gib": {"current": 2.7929}}
+                    }]
+                }]
+            }
+        }), 2.7929)
+
     def test_failure_plan_only_validated_when_a_fails(self):
         steps, meta = probe.plans("failure")
         self.assertEqual(meta, (None, None, None))
