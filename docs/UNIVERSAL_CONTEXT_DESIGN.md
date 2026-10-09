@@ -78,6 +78,23 @@ pickle, scratch spill or checkpoint is introduced.
 - Neither backend process restarts nor saved/independent Master runs preserve
   Context yet.
 
+## Visual lab examples
+
+Open `workflows/universal_conditioning_A.json` and
+`workflows/universal_conditioning_B.json` in separate **Topbar** workflow
+tabs, then capture them from Workflow Director Lab and run A→B.
+
+- A publishes a tiny CONDITIONING to `demo.conditioning` using Universal PUT.
+- B retrieves `demo.conditioning` using Universal GET and passes it to the
+  lab sink, which compares embeddings, pooled output, and sentinel metadata.
+- Both workflow files deliberately depend only on our three experimental
+  laboratory node classes and installed PyTorch; no model downloads or
+  changes to GGUF/LoRA nodes.
+- Change A's label and B's expected label together, then test fresh tab
+  recapture. The `MatchType`/ANY graphical connection behavior must still
+  be accepted in a **real ComfyUI 0.39.0 browser**; JSON-link sanity tests
+  alone do not prove frontend compatibility.
+
 ## Acceptance gates
 
 1. CI: typed regression suite still passes; new tests for nested CONDITIONING,
