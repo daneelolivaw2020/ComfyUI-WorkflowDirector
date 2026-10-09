@@ -16,20 +16,23 @@
 
 ```python
 import sys, json, urllib.request, subprocess
-import torch
+from importlib.metadata import version
 print("Python:", sys.version.split()[0])
-print("Torch:", torch.__version__)
-print("CUDA Torch:", torch.version.cuda)
-print("CUDA disponible:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("GPU:", torch.cuda.get_device_name(0))
+print("Torch instalado (sin importarlo):", version("torch"))
+# Do NOT call torch.cuda from notebook: it can create another CUDA context.
+query = subprocess.run(
+    ["nvidia-smi", "--query-gpu=name,driver_version,memory.used,memory.total",
+     "--format=csv,noheader,nounits"],
+    text=True, capture_output=True, check=False,
+)
+print("NVIDIA (uso GLOBAL, no exclusivo Comfy):", query.stdout.strip())
 url = "http://127.0.0.1:8188/workflowdirector/health"
 with urllib.request.urlopen(url, timeout=10) as r:
     health = json.load(r)
 print("Health:", json.dumps(health, ensure_ascii=False, indent=2)[:3000])
 ```
 
-**Nota:** el notebook ya suele importar Torch para modelos; esta celda es de verificación. No sirve para medir `torch.cuda.memory_allocated()` del proceso ComfyUI: el notebook es **otro proceso**. La medición del PID Comfy se hace desde su servicio y `/proc`. Ejecutar esta celda después de que ComfyUI esté arrancado. Si `/workflowdirector/health` falla, no instalar ProfilerX hasta resolver el arranque base.
+**Nota:** esta celda evita `import torch` deliberadamente para no crear un segundo contexto CUDA desde el notebook. Si celdas anteriores **ya** importaron Torch o accedieron a CUDA, documentarlo: la medición global de nvidia-smi también puede incluir ese contexto adicional. No sirve medir `torch.cuda.memory_allocated()` del notebook para conocer el allocator del **proceso ComfyUI**, que es otro PID. Leer memoria del Comfy desde su servicio y `/proc`. Ejecutar D0 después de que Comfy esté arrancado. Si `/workflowdirector/health` falla, no instalar ProfilerX hasta resolver el arranque base.
 
 ## D1. Línea base SIN extensiones de memoria
 
