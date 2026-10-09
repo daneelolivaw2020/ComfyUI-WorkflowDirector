@@ -5,6 +5,7 @@ No ComfyUI import, torch import, GPU context, unload, or malloc_trim.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -104,7 +105,17 @@ class GlibcDiagnosticsTests(unittest.TestCase):
     def test_collector_never_calls_cleanup(self):
         path = Path(__file__).resolve().parents[1] / "workflowdirector" / "allocator_diagnostics.py"
         source = path.read_text(encoding="utf-8")
-        self.assertNotIn("import torch", source)
+        tree = ast.parse(source)
+        imported = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+        self.assertFalse(
+            any(name == "torch" or name.startswith("torch.") for name in imported),
+            imported,
+        )
         self.assertNotIn("malloc_trim(", source)
         self.assertNotIn("unload_all_models(", source)
         self.assertNotIn("empty_cache(", source)
