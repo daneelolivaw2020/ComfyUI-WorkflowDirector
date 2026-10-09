@@ -100,9 +100,14 @@ pickle, scratch spill or checkpoint is introduced.
 5. Test a real CLIPTextEncode→Universal PUT conditioner, then Universal
    GET→a compatible sampler in B. The no-model fixture does not replace
    real CLIP/Klein model acceptance.
-6. Negative: model-coupled conditioner rejected and B never submitted;
-   failing A must not commit; close B tab and confirm zero jobs.
-7. Heavy A Klein Q4 → B Klein Q6, with memory measurements and correct
+6. Run `python scripts/acceptance_probe.py --case universal_unsafe_conditioning`.
+   A intentionally publishes a conditioning containing an opaque stand-in
+   under the `control` key. Expect Director phase `failed`, code
+   `JOB_FAILED`, **exactly one attempt A in failed state**, empty manifest,
+   and zero B submissions; the acceptance script must return success because
+   this is an intended rejection. No real ControlNet is loaded.
+7. Verify closing/replacing tab B rejects submission before A starts.
+8. Heavy A Klein Q4 → B Klein Q6, with memory measurements and correct
    outputs; inspect RSS/PSS/VRAM after each job. No claims of GPU peak
    telemetry or generic unload behavior.
 
