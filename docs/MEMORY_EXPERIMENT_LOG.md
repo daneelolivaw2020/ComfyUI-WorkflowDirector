@@ -407,3 +407,24 @@ Salida del usuario:
 - **glibc 2.39 nativa en ese PID**: **16** entradas `<heap>` de arenas; espacio actual sistema de arenas `arena_system_current_bytes = 300.61 MiB`, **`free_list_estimate_bytes = 16.28 MiB`** (total fast+rest del XML), `direct_mmap_bytes = 15.18 MiB`. No equivalen a RAM residente ni "bytes liberables"; `malloc_info` no incluye todas las cachés tcache y asignaciones nativas de otras bibliotecas.
 - Comparación histórica pre-M001 del antiguo runtime: RSS ~1.256668 GiB y PSS_Anon ~0.719337 GiB; nuevo baseline **no idéntico** pero similar (RSS ~+0.031 GiB, anon ~+0.025 GiB). No confundir PID 6177 con 16744 ni interpretar como cadena longitudinal.
 - **Siguiente único experimento:** captura de mem RSS/PSS y `malloc_info` inmediatamente DESPUÉS del primer workflow pesado reproducible en el mismo PID, y asentado +60 s. Si A/B original no disponible, recuperar workflow del PNG Comfy en Drive cuando exista o crear y **guardar** un workflow pesado A con sus parámetros registrados; no hace falta que sea idéntico para comparar *dentro* de M009, pero no contrastar picos entre cohortes como si fueran idénticos. No instalar ProfilerX ni intentar `malloc_trim`/unload ni ejecutar diagnosis cuando cola activa. Precaución: `malloc_info` corresponde a los contadores free-list, no garantiza memoria que el SO pueda liberar.
+
+
+### M-009 — POST_A_SETTLED: primer workflow pesado, arenas glibc crecen ~906 MiB (2026-10-09 UTC)
+
+**Fuente:** salida de celda `/content/M009_POST_A.json` aportada por usuario (archivo original POST_A no adjuntado todavía), mide `POST A` y `POST A ESTABILIZADO` después de 60s. Misma cohorte y mismo proceso esperado PID 6177, salvo verificación de JSON. Archivo adjunto `M009_BASELINES.zip` SÍ incluye `M009_PRE_COMFY.json` y `M009_COMFY_COLD.json`, con datos exactos anteriores al trabajo, confirmados por lectura del ZIP en conversación.
+
+**Comparación COLD → POST_A_SETTLED:**
+| Métrica | PRE_A / COLD | POST A asentado | Diferencia |
+|---|---:|---:|---:|
+| RSS proceso GiB | 1.2874 | 2.1020 | +0.8146 GiB (~834 MiB) |
+| PSS GiB | 1.2708 | 2.0852 | +0.8144 GiB |
+| PSS_Anon GiB | 0.7447 | 1.5568 | +0.8121 GiB (~832 MiB) |
+| PSS_File GiB | 0.5163 | 0.5148 | -0.0015 GiB |
+| glibc heap/arena entries | 16 | 16 | 0 |
+| glibc `arena_system_current` MiB | 300.61 | 1206.41 | **+905.79 MiB** |
+| glibc `fast + rest` free-list estimate MiB | 16.28 | 58.72 | **+42.43 MiB** |
+| glibc direct mmap MiB | 15.18 | 15.18 | 0 |
+| system MemAvailable GiB | 10.3184 | 9.5246 | -0.7938 GiB |
+
+**Interpretación:** el incremento de espacio virtual reservado/gestionado por arenas glibc es comparable en orden de magnitud a PSS_Anon residente nuevo; es fuerte evidencia de que glibc participa del crecimiento del proceso. **No** afirmar que el delta de RSS sea enteramente propiedad de glibc sin VMA correlacionado. El aumento de bytes en freelists glibc es solamente ~42 MiB frente al +906 MiB de espacio de arenas; no sostiene hipótesis de que todo el incremento corresponda a fragmentos centrales libres. Aproximación `arena_system_current - (fast+rest)` crece ~863 MiB, pero esto NO es una medición fiable de bytes de objetos vivos: incluye tcache por hilo, overhead y páginas no residentes y otros estados del allocator. `malloc_info` describe estado de arenas, **no garantiza capacidad de liberar**.
+**Siguiente diagnóstico discriminante antes de B**: lectura `GET /workflowdirector/memory` (incluye `diagnostics.comfy_loaded_model_entries` + RAM/VRAM de Torch) mientras la cola nativa esté vacía, para determinar si Comfy mantiene modelos cargados tras A. No ejecutar `/free`, unload, trim. Luego si B se recrea, guardar su workflow y contrastar POST_B contra POST_A en mismo PID. Guardar/descargar `/content/M009_POST_A.json` para inspección detallada y evitar pérdida del runtime.
