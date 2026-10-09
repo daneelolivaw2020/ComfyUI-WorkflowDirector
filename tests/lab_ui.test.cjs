@@ -319,6 +319,8 @@ test("GET picker offers keys from captured PUT without waiting for a run", async
   assert.equal(widgets[0].value, "demo.image",
     "the actual GET key widget is changed");
   assert.equal(widgets[1].serialize, false);
+  assert.equal(widgets[1].options.serialize, false,
+    "Comfy graphToPrompt must not send UI-only combo as API input");
   pickerExt.nodeCreated(node);
   assert.equal(widgets.length, 2, "never duplicate selector on load");
 });
