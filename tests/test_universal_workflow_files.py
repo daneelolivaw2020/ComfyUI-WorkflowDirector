@@ -38,5 +38,34 @@ class UniversalVisualWorkflowFilesTests(unittest.TestCase):
             self.assertEqual(graph["last_link_id"], link_id)
 
 
+    def test_linked_image_examples_match_native_socket_schema(self):
+        a = json.loads((HERE / "universal_image_A.json").read_text())
+        b = json.loads((HERE / "universal_image_B.json").read_text())
+        self.assertNotEqual(a["id"], b["id"])
+        self.assertEqual([n["type"] for n in a["nodes"]], [
+            "EmptyImage", "WorkflowDirectorContextPutUniversal",
+        ])
+        self.assertEqual([n["type"] for n in b["nodes"]], [
+            "WorkflowDirectorContextGetUniversal", "SaveImage",
+        ])
+        self.assertEqual(a["nodes"][0]["widgets_values"], [96, 64, 1, 3116139])
+        self.assertEqual(
+            a["nodes"][1]["widgets_values"], b["nodes"][0]["widgets_values"]
+        )
+        self.assertEqual(a["nodes"][1]["widgets_values"], ["demo.image"])
+        self.assertEqual(a["nodes"][1]["inputs"][0]["type"],
+                         "COMFY_MATCHTYPE_V3")
+        self.assertEqual(b["nodes"][0]["outputs"][0]["type"], "*")
+        for graph in (a, b):
+            self.assertEqual(len(graph["links"]), 1)
+            link_id, source, source_slot, dest, dest_slot, link_type = graph["links"][0]
+            self.assertEqual(link_type, "IMAGE")
+            nodes = {node["id"]: node for node in graph["nodes"]}
+            self.assertEqual(nodes[source]["outputs"][source_slot]["links"], [link_id])
+            self.assertEqual(nodes[dest]["inputs"][dest_slot]["link"], link_id)
+            self.assertEqual(graph["last_node_id"], max(nodes))
+            self.assertEqual(graph["last_link_id"], link_id)
+
+
 if __name__ == "__main__":
     unittest.main()
