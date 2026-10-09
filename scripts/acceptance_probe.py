@@ -11,6 +11,7 @@ Usage:
   python scripts/acceptance_probe.py --case latent
   python scripts/acceptance_probe.py --case failure
   python scripts/acceptance_probe.py --case universal_image
+  python scripts/acceptance_probe.py --case universal_conditioning
 """
 
 from __future__ import annotations
@@ -35,6 +36,8 @@ NODE_TYPES = (
     "WorkflowDirectorContextGetLatent",
     "WorkflowDirectorContextPutUniversal",
     "WorkflowDirectorContextGetUniversal",
+    "WorkflowDirectorTestConditioningSource",
+    "WorkflowDirectorTestConditioningSink",
     "WorkflowDirectorTestMarker",
     "EmptyImage", "EmptyLatentImage", "SaveImage", "SaveLatent",
 )
@@ -188,6 +191,25 @@ def plans(case):
             "accept.universal", "VALUE", f"WD_Acceptance_UNIVERSAL_{run}"
         )
 
+    if case == "universal_conditioning":
+        sentinel = "WD_CONDITIONING_SENTINEL_" + run
+        a = {
+            "1": {"class_type": "WorkflowDirectorTestConditioningSource",
+                  "inputs": {"label": sentinel}},
+            "2": {"class_type": "WorkflowDirectorContextPutUniversal",
+                  "inputs": {"key": "accept.conditioning", "value": ["1", 0]}},
+        }
+        b = {
+            "1": {"class_type": "WorkflowDirectorContextGetUniversal",
+                  "inputs": {"key": "accept.conditioning"}},
+            "2": {"class_type": "WorkflowDirectorTestConditioningSink",
+                  "inputs": {"conditioning": ["1", 0], "expected_label": sentinel}},
+        }
+        return [step("A", "PutConditioning", a),
+                step("B", "GetConditioning", b)], (
+            "accept.conditioning", "VALUE", "PASS_CONDITIONING_TRANSFER_" + sentinel
+        )
+
     if case == "latent":
         a = {
             "1": {"class_type": "EmptyLatentImage",
@@ -329,7 +351,7 @@ def run_case(case, *, max_seconds=120):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--case", choices=("preflight", "string", "image", "latent", "failure", "universal_image"),
+        "--case", choices=("preflight", "string", "image", "latent", "failure", "universal_image", "universal_conditioning"),
         required=True
     )
     parser.add_argument("--timeout", type=int, default=120)
