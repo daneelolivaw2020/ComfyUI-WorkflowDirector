@@ -12,7 +12,7 @@ spec.loader.exec_module(probe)
 
 class AcceptancePlansTests(unittest.TestCase):
     def test_all_plans_use_two_distinct_jobs_and_workflow_ids(self):
-        for case in ("string", "image", "latent", "failure", "universal_image"):
+        for case in ("string", "image", "latent", "failure", "universal_image", "universal_conditioning"):
             with self.subTest(case=case):
                 steps, expected = probe.plans(case)
                 self.assertEqual(len(steps), 2)
@@ -73,6 +73,18 @@ class AcceptancePlansTests(unittest.TestCase):
         self.assertEqual(b["1"]["class_type"], "WorkflowDirectorContextGetUniversal")
         self.assertEqual(b["2"]["class_type"], "SaveImage")
         self.assertTrue(prefix.startswith("WD_Acceptance_UNIVERSAL_"))
+
+    def test_universal_conditioning_integrity_probe(self):
+        steps, (key, kind, sentinel) = probe.plans("universal_conditioning")
+        self.assertEqual((key, kind), ("accept.conditioning", "VALUE"))
+        a, b = [s["prompt"] for s in steps]
+        self.assertEqual(a["1"]["class_type"], "WorkflowDirectorTestConditioningSource")
+        self.assertEqual(a["2"]["class_type"], "WorkflowDirectorContextPutUniversal")
+        self.assertEqual(b["1"]["class_type"], "WorkflowDirectorContextGetUniversal")
+        self.assertEqual(b["2"]["class_type"], "WorkflowDirectorTestConditioningSink")
+        self.assertEqual(b["2"]["inputs"]["conditioning"], ["1", 0])
+        self.assertIn(b["2"]["inputs"]["expected_label"], sentinel)
+        self.assertNotIn("WorkflowDirectorTestConditioningSource", str(b))
 
     def test_failure_plan_only_validated_when_a_fails(self):
         steps, meta = probe.plans("failure")
