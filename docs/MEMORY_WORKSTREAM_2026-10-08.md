@@ -105,6 +105,10 @@ No descargar nada hasta identificar el propietario.
 
 **D5 — Remediación y regresiones**: desarrollar una limpieza concreta para el dueño identificado, o aislamiento de procesos como fallback si no es viable en un único servidor Comfy. Repetir exactos Q4→Q6 y cuantificar mejoras **con y sin ProfilerX**. No fusionar cambios sólo por CI.
 
+## Bitácora de ejecución persistente
+
+**Archivo de resultados:** [MEMORY_EXPERIMENT_LOG.md](MEMORY_EXPERIMENT_LOG.md). Contiene la entrada M-000 con el estado real (sin pruebas de Colab en este frente) y la plantilla para los experimentos M-001, M-002, etc. Actualizar la bitácora después de **cada sesión**; este plan conserva el «por qué», mientras la bitácora conserva los resultados.
+
 ## 6. Reglas de documentación obligatorias para próximas sesiones
 
 En este documento o una nueva bitácora enlazada, al terminar cada experimento agregar:
