@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import ipaddress
 
 from aiohttp import ContentTypeError, web
 import comfyui_version
@@ -11,6 +13,11 @@ from server import PromptServer
 from . import VERSION
 from .core import ActiveRunError, DuplicateRunError, RunNotFoundError
 from .memory import memory_snapshot
+from .allocator_diagnostics import (
+    AllocatorDiagnosticsError,
+    capture_allocator,
+    enabled as glibc_diagnostics_enabled,
+)
 from .memory_analysis import summarize_run_memory
 from .run_api import RunRequestError, parse_run_request
 from .runtime import (
@@ -131,3 +138,55 @@ async def workflowdirector_get_run(request):
             "memory_summary": summarize_run_memory(record),
         }
     )
+
+
+# This route is not registered at all unless explicitly enabled at startup.
+# It is intentionally different from the always-on read-only /memory route.
+if glibc_diagnostics_enabled():
+    @PromptServer.instance.routes.get("/workflowdirector/memory/glibc")
+    async def workflowdirector_glibc_diagnostics(request):
+        # Default Colab launches Comfy with --listen 127.0.0.1. Reject
+        # non-local direct clients as additional defense, not authentication.
+        try:
+            remote_is_local = ipaddress.ip_address(request.remote or "").is_loopback
+        except ValueError:
+            remote_is_local = False
+        if not remote_is_local:
+            return web.json_response({"ok": False, "error": "loopback only"}, status=403)
+
+        # WorkflowDirector active_run_id alone does not detect manual Comfy jobs.
+        # Verify the native Comfy prompt queue (running AND pending) too.
+        queue = getattr(PromptServer.instance, "prompt_queue", None)
+        try:
+            director = get_director_service()
+            busy = (
+                queue is None
+                or queue.get_tasks_remaining() != 0
+                or director.active_run_id is not None
+            )
+        except (RuntimeError, AttributeError):
+            return web.json_response(
+                {"ok": False, "error": "unable to verify idle state"}, status=503
+            )
+        if busy:
+            return web.json_response(
+                {"ok": False, "error": "ComfyUI or Director is busy"}, status=409
+            )
+
+        try:
+            # Do not hold up aiohttp event loop during stdio XML generation.
+            # Still a native diagnostic in THIS Comfy PID, not the Colab notebook.
+            result = await asyncio.to_thread(capture_allocator)
+        except (AllocatorDiagnosticsError, OSError) as exc:
+            return web.json_response(
+                {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                status=503,
+            )
+
+        # A direct UI job could start between the pre-check and the snapshot.
+        # Reject potentially contaminated results rather than claiming idle.
+        if queue.get_tasks_remaining() != 0 or director.active_run_id is not None:
+            return web.json_response(
+                {"ok": False, "error": "job started during sampling"}, status=409
+            )
+        return web.json_response({"ok": True, "snapshot": result})
