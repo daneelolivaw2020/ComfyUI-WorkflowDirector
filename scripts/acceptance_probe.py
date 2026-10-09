@@ -12,6 +12,7 @@ Usage:
   python scripts/acceptance_probe.py --case failure
   python scripts/acceptance_probe.py --case universal_image
   python scripts/acceptance_probe.py --case universal_conditioning
+  python scripts/acceptance_probe.py --case universal_unsafe_conditioning
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ NODE_TYPES = (
     "WorkflowDirectorContextGetUniversal",
     "WorkflowDirectorTestConditioningSource",
     "WorkflowDirectorTestConditioningSink",
+    "WorkflowDirectorTestConditioningUnsafeSource",
     "WorkflowDirectorTestMarker",
     "EmptyImage", "EmptyLatentImage", "SaveImage", "SaveLatent",
 )
@@ -210,6 +212,18 @@ def plans(case):
             "accept.conditioning", "VALUE", "PASS_CONDITIONING_TRANSFER_" + sentinel
         )
 
+    if case == "universal_unsafe_conditioning":
+        a = {
+            "1": {"class_type": "WorkflowDirectorTestConditioningUnsafeSource",
+                  "inputs": {}},
+            "2": {"class_type": "WorkflowDirectorContextPutUniversal",
+                  "inputs": {"key": "should.not.appear", "value": ["1", 0]}},
+        }
+        b = {"1": {"class_type": "WorkflowDirectorContextPutString",
+                   "inputs": {"key": "must.not.run", "value": "ERROR"}}}
+        return [step("A", "UnsafeConditioning", a),
+                step("B", "MustNotRun", b)], (None, None, None)
+
     if case == "latent":
         a = {
             "1": {"class_type": "EmptyLatentImage",
@@ -294,12 +308,22 @@ def run_case(case, *, max_seconds=120):
     phase = record.get("phase")
     attempts = record.get("attempts") or []
     manifest = record.get("context_manifest") or {}
-    expected_failed = case == "failure"
+    expected_failed = case in ("failure", "universal_unsafe_conditioning")
     good_phase = phase == ("failed" if expected_failed else "completed")
-    good_attempts = (
-        len(attempts) == (1 if expected_failed else 2)
-        and (len(attempts) == 1 or attempts[0]["job_id"] != attempts[1]["job_id"])
-    )
+    if expected_failed:
+        good_attempts = (
+            len(attempts) == 1
+            and attempts[0].get("step_id") == "A"
+            and attempts[0].get("state") == "failed"
+            and record.get("failure_code") == "JOB_FAILED"
+        )
+    else:
+        good_attempts = (
+            len(attempts) == 2
+            and [a.get("step_id") for a in attempts] == ["A", "B"]
+            and all(a.get("state") == "completed" for a in attempts)
+            and attempts[0].get("job_id") != attempts[1].get("job_id")
+        )
     context_ok = (
         not manifest if expected_failed
         else manifest.get(key, {}).get("type") == kind
@@ -358,7 +382,7 @@ def run_case(case, *, max_seconds=120):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--case", choices=("preflight", "string", "image", "latent", "failure", "universal_image", "universal_conditioning"),
+        "--case", choices=("preflight", "string", "image", "latent", "failure", "universal_image", "universal_conditioning", "universal_unsafe_conditioning"),
         required=True
     )
     parser.add_argument("--timeout", type=int, default=120)
