@@ -472,3 +472,19 @@ El usuario proporcionó ZIP `M009_COMPLETE_EVIDENCE.zip` con los **siete JSON** 
 Los dos workflows tienen **15 nodos/19 enlaces idénticos**, igual seed 261, Euler/4 pasos/CFG1, LoRA, VAE, resolución, prompt. **Diferencias reales**: modelo UNet Q4 vs Q6, codificador Qwen Q4 vs Q6, y **`CLIPLoaderGGUF.type` A=`stable_diffusion` vs B=`flux2`** (riesgo de confusor semántico y de consumo). Comfy 0.39.0 tiene rama explícita FLUX2 para text encoders Klein, diferente de la ruta para otros tipos; conservar archivo A original, sugerir una copia con tipo flux2 para futuras pruebas y tomar nuevo baseline para cualquier comparación.
 
 B se ejecutó desde Comfy normal, no Director Lab: conclusión de reutilización del mismo proceso, no validación de fronteras automáticas del Director. Por ahora no repetir jobs ni usar `malloc_trim` o descargadores. Próximo dato opcional no intrusivo: mapa `smaps` de PID 6177 para distinguir 64MiB blocks de otras regiones; separar explicación de ocupación vs reclamabilidad.
+
+
+### M-009 — smaps POST_B: distribución de memoria anónima por categorías VMA
+
+**Salida reportada desde el Comfy del runtime nuevo, PID 6177, tras A→B, sin unload ni reinicio:**
+- `regions_total = 3007`;
+- `anonymous_total_mib = 1609.29` (~1.5716 GiB PSS_Anon, concuerda con el resultado anterior);
+- `main_heap_mib = 302.31`;
+- `secondary_heap_candidates = 25` (regiones anónimas `rw-p` alineadas a 64MiB y con segmento `---p` adyacente para completar bloque de 64MiB, o exactamente 64MiB);
+- `secondary_heap_resident_mib = 593.92`;
+- `other_anonymous_mib = 713.06`;
+- fichero local del usuario `/content/M009_POST_B_SMAPS.json`, **todavía no adjuntado**; salida usada directamente.
+
+**Interpretación:** el inventario glibc `malloc_info` POST_B indica 16 entradas `<heap>` (= arenas del XML), mientras smaps encuentra 25 bloques candidatos de 64MiB. No equiparar la cantidad de mapas con cantidad de arenas; un arena puede utilizar varios heaps, y las reglas de patrón son heurísticas. No concluir que 593.92MiB sean chunks libres, ni que 713.06MiB sean externos a glibc: el filtro de patrones sólo detecta cierta forma de heap secundario, dejando otros VMA sin clasificación de propietario. El `[heap]` principal ~302.31MiB es memoria física residente, no necesariamente datos Python únicamente. La reserva virtual `arena_system_current=1214.61MiB` y `free_fast+rest=66.81MiB` no permiten convertir de manera fiable a RAM liberable: incluye chunks en uso, tcache y potenciales páginas no residentes/overhead. Tampoco prueban si hay leak. **No tenemos smaps completo COLD del mismo proceso** para atribuir exactamente crecimiento +0.8121GiB a las categorías post B.
+
+**Siguiente paso recomendado:** análisis pasivo discriminante de **las mayores regiones dentro de `other_anonymous`** (path/perms/anonymous RSS/virtual size, sin direcciones sensibles). Eso permitirá ver si los 713MiB están en pocos VMA grandes, muchos bloques pequeños, páginas COW de archivos o mapeos anon etiquetados y escoger método de atribución con menos riesgo. No cambiar glibc tunables, `malloc_trim`, modelo manager, Torch/CUDA ni reiniciar para este paso. Una vez caracterizadas las regiones no clasificadas, planificar (no ejecutar a ciegas) instrumentación con ownership/retainer para resolver cuánto contenido está vivo.
