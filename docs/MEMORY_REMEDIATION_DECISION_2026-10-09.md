@@ -1,3 +1,21 @@
+## Aclaración explícita del usuario: requisito de producto NO NEGOCIABLE (2026-10-09)
+
+**Corrección de una desviación importante:** WorkflowDirector **NO se considera resuelto** porque A→B termina sin crash u OOM, ni por reutilizar arenas/reservas. El objetivo original es que después de **cada** workflow, antes del siguiente, se **libere toda RAM/VRAM de la ejecución previa salvo los valores explícitamente guardados en Context** y el **suelo inevitable del runtime** (ComfyUI/Python/Torch/CUDA y supervisor). El estado medido ha de ser comparable al arranque frío de ComfyUI, ajustado por el tamaño real de Context; conservar memoria de modelos o temporales ocultos no cumple el requisito.
+
+Flujo requerido: `A (nativo)` → `PUT Context seguro, staged` → `A completed` → `Context COMMIT` → `barrera que devuelve el coste RAM/VRAM previo a la línea base salvo Context` → `verificación/fail closed` → `B (nativo) lee GET Context`, repetible para N workflows. El usuario quiere DOS nodos públicos universales Put/Get, no una serie de nodos por tipo.
+
+**Implicación arquitectónica decisiva:** el Context v2 actual está en `workflowdirector/context.py` **en el mismo PID de ComfyUI**; mata/reinicia el proceso y pierdes Context. Para recuperación fuerte mediante aislamiento por procesos hay que **mover Context a un supervisor fuera del PID reiniciable o persistirlo en scratch/durable con un protocolo de commit transaccional y serialización segura**, manteniendo el contrato Put/Get compatible. No serializar patchers MODEL/CLIP/VAE ni referencias CUDA; sí datos CPU soportados por el codec y adaptadores auditados. Tras la muerte del proceso, pointers Python y GPU no son válidos; restaurar blobs/metadata tipados bajo clave, presupuesto y revisión semántica.
+
+**Opciones evaluables con criterio estricto:**
+- **Mismo PID:** exige demostrar remoción completa de referencias ajenas a Context y retorno efectivo a línea base de PSS_Anon, RSS y VRAM; las mediciones M-009 ya muestran que `--cache-none`, registrar 0 modelos y usar B después de A **NO LO LOGRAN**. Si las bibliotecas nativas retienen arenas/cachés no reclamables, no se puede prometer reset perfecto sin matar el PID.
+- **PID nuevo por etapa** (sugerencia arquitectónica más sólida, todavía NO implementada): supervisor externo maneja ciclo completo de ComfyUI worker; exporta/commitea Context fuera del worker; termina limpiamente el proceso, comprueba su salida y libera su memoria al SO; arranca siguiente worker e importa Context. Mantener ejecución nativa independiente, prueba de transferencia real de tipos (STRING/IMAGE/LATENT, CONDITIONING soportado), manejo seguro de errores y continuidad del Lab/UI. Coste de startup/reload y complejidad no deben ocultarse.
+- Scratch/DURABLE son modos ya contemplados en `docs/CONTEXT_RESIDENCY.md`, **pero no implementados**. No proponer que hoy se puede reiniciar y preservar Context.
+
+**Criterio de aceptación correcto:** medir COLD/after boundary bajo un mismo presupuesto fijo y **normalizar por payload de Context**; verificar con nativo A→B que nada fuera de Context se hereda entre etapas, que B reproduce los valores bajo las mismas keys/tipos y que el nuevo worker está limpio. `MemAvailable` no es única métrica (page cache y otros procesos); monitorizar PSS anónima del worker, RAM/VRAM disponible, modelo manager, archivos/context payload, y diferencia del suelo del proceso en cada reinicio. Las ejecuciones deben fallar cerradas ante Context incompleto o memoria no recuperada. El mero éxito de generación es condición necesaria, **no suficiente**.
+
+**Context PR #6 permanece pausada**; esta aclaración modifica requisitos/documentación, no habilita continuar código universal ni tocar PR #6 sin decisión del usuario.
+
+
 # Decisión correctiva — dejar de medir y resolver gestión de memoria A→B (2026-10-09)
 
 ## Diagnóstico de enfoque
