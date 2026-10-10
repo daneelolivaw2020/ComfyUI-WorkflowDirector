@@ -444,6 +444,38 @@ class ContextLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ContextError):
             store.manifest()
 
+    async def test_n_workflows_keep_context_committed_through_four_native_jobs(self):
+        """The Director engine has no A/B step-count limit or fixed slot names."""
+        store = registry()
+        adapter = NativeJobAdapterWithContext(store)
+        p = RunPlan(
+            run_id=str(uuid.uuid4()),
+            steps=(
+                PreparedStep("W1", "producer", "Producer",
+                             {"node": {"class_type": "A"}}),
+                PreparedStep("W2", "repeated-transform", "Step two",
+                             {"node": {"class_type": "C"}}),
+                PreparedStep("W3", "repeated-transform", "Step three",
+                             {"node": {"class_type": "C"}}),
+                PreparedStep("W4", "consumer", "Consumer",
+                             {"node": {"class_type": "B"}}),
+            ),
+        )
+        service = DirectorRunService(
+            DirectorEngine(adapter, context=store), context=store,
+        )
+        await service.start(p)
+        record = await service.wait(p.run_id)
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(len(record.attempts), 4)
+        self.assertEqual(len(set(adapter.submitted)), 4)
+        self.assertEqual(adapter.b_read_value, "from-A")
+        self.assertEqual(
+            [e.step_id for e in record.events if e.kind == "context_committed"],
+            ["W1", "W2", "W3", "W4"],
+        )
+        self.assertTrue(store.is_idle(), "all Context references end with the run")
+
     async def test_explicit_cleanup_C_preserves_committed_A_for_B(self):
         store = registry()
         adapter = NativeJobAdapterWithContext(store)
