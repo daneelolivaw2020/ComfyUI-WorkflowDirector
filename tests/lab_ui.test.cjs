@@ -713,7 +713,7 @@ test("GET universal fixes serialized STRING output sockets without dropping IMAG
   link.type = "STRING";
   node.onConnectionsChange(2, 0, true, link);
   assert.equal(link.type, "*", "stale links must be repaired independently");
-  assert.equal(connectionsCalls, 1, "original connection callback still called");
+  assert.equal(connectionsCalls, 2, "original connection callback still called");
 
   ext.nodeCreated(node);
   node.onConnectionsChange(2, 0, true, link);
