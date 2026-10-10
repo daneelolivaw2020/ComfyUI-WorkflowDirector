@@ -5,6 +5,14 @@ const state = {
   A: null,
   B: null,
   C: null,
+  // In-memory ordered workflow list. IDs remain stable when rows move.
+  sequence: [],
+  nextSequenceId: 1,
+  sequenceSelectedPath: null,
+  sequenceEditing: false,
+  sequenceRevision: 0,
+  sequenceRunRevision: null,
+  sequenceRunId: null,
   lastRunId: null,
   lastRun: null,
   pollToken: 0,
@@ -131,7 +139,7 @@ async function openTabAndCompile(path, expectedId) {
   );
 }
 
-async function prepareCurrentSteps(slots) {
+async function prepareCurrentSteps(slots, { allowRepeats = false } = {}) {
   if (!state.autoRefresh) {
     // Manual mode is deliberately explicit: do not mutate captures.
     return slots.map((slot) => ({ ...slot }));
@@ -140,10 +148,10 @@ async function prepareCurrentSteps(slots) {
   const previousPath = previousTab.dataset.workflowPath;
   const previousId = assertCompiled(await app.graphToPrompt()).workflow.id;
   const workflowIds = slots.map((s) => s.workflow_id);
-  if (new Set(workflowIds).size !== workflowIds.length) {
+  if (!allowRepeats && new Set(workflowIds).size !== workflowIds.length) {
     throw new Error(
       "Two linked tabs share a workflow UUID. Make each workflow a separate " +
-      "document with a unique UUID, then capture A and B again. No run was submitted."
+      "document with a unique UUID, then capture the slots again. No run was submitted."
     );
   }
   const prepared = [];
@@ -186,7 +194,7 @@ function plannedContextKeys() {
   // The live Context is empty before the Director starts. Offer keys from
   // linked producers as choices for configuring GET before A has run.
   const keys = new Set();
-  for (const step of [state.A, state.B, ...state.currentSteps]) {
+  for (const step of [state.A, state.B, ...state.sequence, ...state.currentSteps]) {
     const prompt = step?.prompt ?? {};
     for (const node of Object.values(prompt)) {
       if (!node?.class_type?.startsWith(PUT_NODE_PREFIX)) continue;
@@ -370,6 +378,265 @@ async function capture(slot) {
   refreshAllPanels();
 }
 
+function sequenceEditable() {
+  return !state.isRunning && !state.monitoringUncertain && !state.sequenceEditing;
+}
+
+function sequenceChanged() {
+  state.sequenceRevision += 1;
+  state.sequenceRunRevision = null;
+  state.sequenceRunId = null;
+  refreshAllPanels();
+}
+
+async function addSequenceTab(path) {
+  if (!sequenceEditable()) {
+    throw new Error("Wait for the current run or tab capture to finish.");
+  }
+  if (!path || !findWorkflowTab(path)) {
+    throw new Error("Choose an open workflow tab to add.");
+  }
+
+  state.sequenceEditing = true;
+  refreshAllPanels();
+  let selected = null;
+  try {
+    // Capture from the real canvas. Do not use an old API prompt or assume
+    // that a tab's label identifies the workflow.
+    const original = selectedWorkflowTab();
+    const originalPath = original.dataset.workflowPath;
+    const originalId = assertCompiled(await app.graphToPrompt()).workflow.id;
+    try {
+      if (originalPath === path) {
+        const compiled = snapshotCompiled(assertCompiled(await app.graphToPrompt()));
+        selected = {
+          compiled, tab: original,
+        };
+      } else {
+        // A tab not yet captured has no verified UUID. Wait for its canvas to
+        // load, then ensure the active topbar tab AND compiled canvas agree.
+        const tab = findWorkflowTab(path);
+        (tab.querySelector(".workflow-label") || tab).click();
+        const deadline = Date.now() + 12000;
+        while (Date.now() < deadline) {
+          const active = selectedWorkflowTab();
+          if (active.dataset.workflowPath === path) {
+            const compiled = await app.graphToPrompt();
+            if (compiled?.workflow?.id && compiled?.output) {
+              selected = {
+                compiled: snapshotCompiled(assertCompiled(compiled)),
+                tab: active,
+              };
+              break;
+            }
+          }
+          await sleep(150);
+        }
+        if (!selected) {
+          throw new Error("Could not capture the selected workflow canvas. No step added.");
+        }
+      }
+    } finally {
+      if (selectedWorkflowTab().dataset.workflowPath !== originalPath ||
+          assertCompiled(await app.graphToPrompt()).workflow.id !== originalId) {
+        await openTabAndCompile(originalPath, originalId);
+      }
+    }
+    const stepId = "W" + state.nextSequenceId++;
+    state.sequence.push({
+      step_id: stepId,
+      workflow_id: selected.compiled.workflow.id,
+      name: tabName(selected.tab),
+      tab_path: path,
+      prompt: selected.compiled.output,
+      workflow: selected.compiled.workflow,
+    });
+    sequenceChanged();
+    notify("success", "Workflow added to sequence", tabName(selected.tab));
+  } finally {
+    state.sequenceEditing = false;
+    refreshAllPanels();
+  }
+}
+
+function moveSequenceStep(index, delta) {
+  if (!sequenceEditable()) throw new Error("Cannot reorder during a run.");
+  const next = index + delta;
+  if (index < 0 || index >= state.sequence.length ||
+      next < 0 || next >= state.sequence.length) return;
+  [state.sequence[index], state.sequence[next]] =
+    [state.sequence[next], state.sequence[index]];
+  sequenceChanged();
+}
+
+function removeSequenceStep(index) {
+  if (!sequenceEditable()) throw new Error("Cannot remove during a run.");
+  if (index < 0 || index >= state.sequence.length) return;
+  state.sequence.splice(index, 1);
+  sequenceChanged();
+}
+
+async function runSequence() {
+  if (!state.sequence.length) {
+    throw new Error("Add at least one workflow to the sequence.");
+  }
+  state.sequenceRunRevision = state.sequenceRevision;
+  state.sequenceRunId = null;
+  return startRun([...state.sequence], {
+    allowRepeats: true,
+    source: "sequence",
+  });
+}
+
+function sequenceStepStatus(step) {
+  if (state.sequenceRunRevision !== state.sequenceRevision ||
+      !state.sequenceRunId || state.lastRunId !== state.sequenceRunId ||
+      state.lastRun?.run_id !== state.sequenceRunId) return "Not run";
+  const record = state.lastRun.record ?? {};
+  const attempt = (record.attempts ?? []).find(a => a.step_id === step.step_id);
+  if (attempt) {
+    const name = attempt.state;
+    if (name === "completed") return "Completed";
+    if (name === "failed") return "Failed";
+    if (name === "cancelled") return "Cancelled";
+    if (name === "in_progress") return "Running";
+    return "Queued";
+  }
+  if (record.phase === "running" || record.phase === "ready") return "Waiting";
+  return "Not reached";
+}
+
+function sequenceButton(label, action, disabled) {
+  const node = button(label, action, disabled);
+  node.style.padding = "4px 8px";
+  return node;
+}
+
+function renderSequence(root) {
+  const section = document.createElement("section");
+  section.style.border = "1px solid var(--border-color, #555)";
+  section.style.borderRadius = "9px";
+  section.style.padding = "12px";
+  section.style.marginBottom = "10px";
+
+  const heading = document.createElement("div");
+  heading.textContent = "Workflow sequence";
+  heading.style.fontWeight = "700";
+  heading.style.fontSize = "16px";
+  section.appendChild(heading);
+
+  const summary = document.createElement("div");
+  summary.style.fontSize = "12px";
+  summary.style.opacity = "0.85";
+  summary.style.margin = "3px 0 10px";
+  summary.textContent =
+    "Arrange normal ComfyUI workflows in execution order. " +
+    "Context survives between steps of this run; it is released at the end. " +
+    "This list is temporary (not saved). Cleanup is not inserted automatically.";
+  section.appendChild(summary);
+
+  const controls = document.createElement("div");
+  controls.style.display = "flex";
+  controls.style.flexWrap = "wrap";
+  controls.style.gap = "7px";
+
+  const tabPicker = document.createElement("select");
+  tabPicker.setAttribute("aria-label", "Open workflow tab to add");
+  tabPicker.style.maxWidth = "min(440px, 100%)";
+  tabPicker.style.minWidth = "170px";
+  tabPicker.style.flex = "1";
+  const tabs = workflowTabs();
+  const paths = tabs.map(t => t.dataset.workflowPath);
+  const active = tabs.find(t => {
+    try { return selectedWorkflowTab().dataset.workflowPath === t.dataset.workflowPath; }
+    catch { return false; }
+  });
+  if (!paths.includes(state.sequenceSelectedPath)) {
+    state.sequenceSelectedPath = active?.dataset.workflowPath ?? paths[0] ?? null;
+  }
+  if (!tabs.length) {
+    const opt = document.createElement("option");
+    opt.textContent = "Open a workflow tab first";
+    tabPicker.appendChild(opt);
+  }
+  for (const tab of tabs) {
+    const opt = document.createElement("option");
+    opt.value = tab.dataset.workflowPath;
+    opt.textContent = tabName(tab);
+    if (opt.value === state.sequenceSelectedPath) opt.selected = true;
+    tabPicker.appendChild(opt);
+  }
+  tabPicker.disabled = !sequenceEditable() || !tabs.length;
+  tabPicker.addEventListener("change", () => {
+    state.sequenceSelectedPath = tabPicker.value;
+  });
+  controls.appendChild(tabPicker);
+  controls.appendChild(
+    sequenceButton("+ Add workflow",
+      () => addSequenceTab(state.sequenceSelectedPath),
+      !sequenceEditable() || !tabs.length)
+  );
+  controls.appendChild(
+    sequenceButton("Run all (" + state.sequence.length + ")",
+      () => runSequence(),
+      !sequenceEditable() || !state.sequence.length)
+  );
+  section.appendChild(controls);
+
+  const list = document.createElement("div");
+  list.style.display = "grid";
+  list.style.gap = "5px";
+  list.style.marginTop = "12px";
+  if (!state.sequence.length) {
+    const hint = document.createElement("div");
+    hint.style.opacity = "0.7";
+    hint.textContent = "No workflows yet. Select an open tab and click + Add workflow.";
+    list.appendChild(hint);
+  }
+  for (const [index, step] of state.sequence.entries()) {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "7px";
+    row.style.border = "1px solid var(--border-color, #555)";
+    row.style.borderRadius = "6px";
+    row.style.padding = "6px 8px";
+
+    const num = document.createElement("strong");
+    num.textContent = (index + 1) + ".";
+    num.style.minWidth = "22px";
+    row.appendChild(num);
+
+    const label = document.createElement("div");
+    label.style.flex = "1";
+    label.style.minWidth = "100px";
+    const actualTab = findWorkflowTab(step.tab_path);
+    const title = document.createElement("div");
+    title.textContent = actualTab ? tabName(actualTab) : step.name + " (closed)";
+    title.style.fontWeight = "600";
+    label.appendChild(title);
+    const info = document.createElement("div");
+    info.style.fontSize = "11px";
+    info.style.opacity = "0.75";
+    info.textContent = step.step_id + " · " +
+      (actualTab ? sequenceStepStatus(step) : "Tab closed");
+    label.appendChild(info);
+    row.appendChild(label);
+
+    row.appendChild(sequenceButton("↑",
+      () => moveSequenceStep(index, -1),
+      !sequenceEditable() || index === 0));
+    row.appendChild(sequenceButton("↓",
+      () => moveSequenceStep(index, 1),
+      !sequenceEditable() || index === state.sequence.length - 1));
+    row.appendChild(sequenceButton("Remove",
+      () => removeSequenceStep(index), !sequenceEditable()));
+    list.appendChild(row);
+  }
+  section.appendChild(list);
+  root.appendChild(section);
+}
+
 function metricValue(metrics, key) {
   const value = metrics?.[key]?.current;
   return value == null ? "—" : String(value);
@@ -532,7 +799,7 @@ async function refreshLastRun() {
   return result;
 }
 
-async function startRun(steps) {
+async function startRun(steps, { allowRepeats = false, source = "legacy" } = {}) {
   if (state.isRunning || state.monitoringUncertain) {
     throw new Error(
       "A WorkflowDirector run may still be active. Reconnect to the last run " +
@@ -550,7 +817,7 @@ async function startRun(steps) {
   let acknowledged = false;
   let rejected = false;
   try {
-    const preparedSteps = await prepareCurrentSteps(steps);
+    const preparedSteps = await prepareCurrentSteps(steps, { allowRepeats });
     state.currentSteps = preparedSteps;
     state.syncedRunId = null;
     state.liveContext = null;
@@ -559,6 +826,7 @@ async function startRun(steps) {
     // Preassign and retain the run UUID before submission so a lost HTTP
     // acknowledgement can be reconciled by GET /runs/{run_id}.
     const runId = crypto.randomUUID();
+    if (source === "sequence") state.sequenceRunId = runId;
     const responsePromise = api.fetchApi("/workflowdirector/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -673,12 +941,23 @@ function renderPanel(root) {
   root.style.overflow = "auto";
   root.style.height = "100%";
 
+  renderSequence(root);
+
+  const legacy = document.createElement("details");
+  const legacyTitle = document.createElement("summary");
+  legacyTitle.textContent = "Legacy A / B / Cleanup lab controls";
+  legacyTitle.style.cursor = "pointer";
+  legacyTitle.style.opacity = "0.8";
+  legacyTitle.style.marginBottom = "5px";
+  legacy.appendChild(legacyTitle);
+  root.appendChild(legacy);
+
   const warning = document.createElement("div");
   warning.textContent =
     "LAB ONLY — bind two or three OPEN TOPBAR workflow tabs. Fresh compile before each Run (optional); immutable during the run. Cleanup C is opt-in. Use fixed seeds; beforeQueued-dependent nodes remain experimental.";
   warning.style.fontWeight = "600";
   warning.style.marginBottom = "8px";
-  root.appendChild(warning);
+  legacy.appendChild(warning);
 
   const captures = document.createElement("div");
   captures.style.display = "flex";
@@ -729,7 +1008,7 @@ function renderPanel(root) {
       !state.lastRunId || state.isRunning
     )
   );
-  root.appendChild(captures);
+  legacy.appendChild(captures);
 
   const standaloneNotice = document.createElement("div");
   standaloneNotice.textContent =
@@ -738,7 +1017,7 @@ function renderPanel(root) {
     "use an already proven cleanup workflow. C must not contain Context nodes.";
   standaloneNotice.style.fontSize = "12px";
   standaloneNotice.style.marginTop = "6px";
-  root.appendChild(standaloneNotice);
+  legacy.appendChild(standaloneNotice);
 
   const options = document.createElement("div");
   options.style.display = "flex";
@@ -762,7 +1041,7 @@ function renderPanel(root) {
     label.append(checkbox, document.createTextNode(text));
     options.appendChild(label);
   }
-  root.appendChild(options);
+  legacy.appendChild(options);
 
   const slots = document.createElement("div");
   slots.style.margin = "8px 0";
@@ -774,13 +1053,13 @@ function renderPanel(root) {
     " | Cleanup: " +
     (state.C ? state.C.name + " [" + state.C.workflow_id + "]" : "not linked") +
     (state.autoRefresh ? " | compiled fresh before each Run" : " | manual snapshots");
-  root.appendChild(slots);
+  legacy.appendChild(slots);
   if (state.statusWarning) {
     const warning = document.createElement("div");
     warning.textContent = state.statusWarning;
     warning.style.color = "var(--error-color, #cf534a)";
     warning.style.fontWeight = "600";
-    root.appendChild(warning);
+    legacy.appendChild(warning);
   }
 
   const run = state.lastRun ?? { record: {} };
