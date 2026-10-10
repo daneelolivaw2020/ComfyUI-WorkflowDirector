@@ -14,7 +14,7 @@ const source = fs.readFileSync("web/workflow_director_lab.js", "utf8")
   "\nglobalThis.__lab = { state, capture, prepareCurrentSteps, " +
   "openTabAndCompile, selectedWorkflowTab, announceStepEvents, startRun, " +
   "availableContextKeys, plannedContextKeys, attachGetKeySelector, synchronizeTerminalOutputs, " +
-  "addSequenceTab, moveSequenceStep, removeSequenceStep, runSequence, sequenceStepStatus };";
+  "addSequenceTab, moveSequenceStep, removeSequenceStep, runSequence, sequenceStepStatus, viewSequenceResult };";
 
 function makeEnvironment(config = {}) {
   const tabs = new Map();
@@ -579,4 +579,69 @@ test("the full N sequence is temporary in browser state, with no save endpoint",
   assert.match(source, /sequenceButton\("↑"/);
   assert.match(source, /sequenceButton\("↓"/);
   assert.doesNotMatch(source, /workflowdirector\/sequences\/save/);
+});
+
+
+test("View result restores the selected completed stage, not the final one", async () => {
+  const e = makeEnvironment({
+    historyOutputs: { "3": { images: [{ filename: "stage-one.png" }] } },
+  });
+  e.makeTab("temp/one", "Stage 1", "uuid-one");
+  e.makeTab("temp/two", "Stage 2", "uuid-two");
+  await e.lab.addSequenceTab("temp/one");
+  e.select("temp/two");
+  await e.lab.addSequenceTab("temp/two");
+  const [one, two] = e.lab.state.sequence;
+  const runId = "run-123";
+  e.lab.state.sequenceRunId = runId;
+  e.lab.state.sequenceRunRevision = e.lab.state.sequenceRevision;
+  e.lab.state.lastRunId = runId;
+  e.lab.state.currentSteps = [one, two];
+  e.lab.state.lastRun = {
+    run_id: runId,
+    record: {
+      phase: "completed",
+      attempts: [
+        { step_id: one.step_id, job_id: "job-one", state: "completed" },
+        { step_id: two.step_id, job_id: "job-two", state: "completed" },
+      ],
+    },
+  };
+  assert.equal(e.lab.sequenceStepStatus(one), "Completed");
+  await e.lab.viewSequenceResult(one);
+  assert.equal(e.active(), "temp/one");
+  assert.equal(e.app.nodeOutputs["3"].images[0].filename, "stage-one.png");
+  e.lab.moveSequenceStep(0, 1);
+  await assert.rejects(
+    () => e.lab.viewSequenceResult(one),
+    /sequence changed since the last run/
+  );
+});
+
+test("View result rejects noncompleted attempts even when the tab exists", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/one", "Stage 1", "uuid-one");
+  await e.lab.addSequenceTab("temp/one");
+  const step = e.lab.state.sequence[0];
+  e.lab.state.sequenceRunId = "run";
+  e.lab.state.sequenceRunRevision = e.lab.state.sequenceRevision;
+  e.lab.state.lastRunId = "run";
+  e.lab.state.lastRun = { run_id: "run", record: {
+    phase: "failed",
+    attempts: [{ step_id: step.step_id, job_id: "job", state: "failed" }],
+  } };
+  e.lab.state.currentSteps = [step];
+  await assert.rejects(() => e.lab.viewSequenceResult(step),
+    /no completed native job/);
+});
+
+test("the N-workflow sequence uses the existing backend without automatically inserting Cleanup", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "A", "id-A");
+  e.makeTab("temp/B", "B", "id-B");
+  e.select("temp/A"); await e.lab.addSequenceTab("temp/A");
+  e.select("temp/B"); await e.lab.addSequenceTab("temp/B");
+  await e.lab.runSequence();
+  assert.deepEqual(Array.from(e.posted[0].steps, x => x.step_id), ["W1", "W2"]);
+  assert.equal(e.posted[0].steps.some(x => x.step_id === "C"), false);
 });
