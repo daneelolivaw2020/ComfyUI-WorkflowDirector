@@ -13,6 +13,7 @@ const state = {
   sequenceRevision: 0,
   sequenceRunRevision: null,
   sequenceRunId: null,
+  legacyExpanded: false,
   lastRunId: null,
   lastRun: null,
   pollToken: 0,
@@ -490,6 +491,15 @@ async function runSequence() {
   });
 }
 
+async function runSequenceStep(step) {
+  if (!state.sequence.includes(step)) {
+    throw new Error("This workflow is no longer in the sequence.");
+  }
+  state.sequenceRunRevision = state.sequenceRevision;
+  state.sequenceRunId = null;
+  return startRun([step], { allowRepeats: true, source: "sequence" });
+}
+
 function sequenceStepStatus(step) {
   if (state.sequenceRunRevision !== state.sequenceRevision ||
       !state.sequenceRunId || state.lastRunId !== state.sequenceRunId ||
@@ -614,6 +624,9 @@ function renderSequence(root) {
         (actualTab.querySelector(".workflow-label") || actualTab).click();
       }, state.isRunning || state.sequenceEditing));
     }
+    row.appendChild(sequenceButton("Run only",
+      () => runSequenceStep(step),
+      !actualTab || !sequenceEditable()));
     row.appendChild(sequenceButton("View result",
       () => viewSequenceResult(step),
       !actualTab || !sequenceEditable() ||
@@ -940,6 +953,10 @@ function renderPanel(root) {
   renderSequence(root);
 
   const legacy = document.createElement("details");
+  legacy.open = state.legacyExpanded;
+  legacy.addEventListener("toggle", () => {
+    if (root.contains(legacy)) state.legacyExpanded = legacy.open;
+  });
   const legacyTitle = document.createElement("summary");
   legacyTitle.textContent = "Legacy A / B / Cleanup lab controls";
   legacyTitle.style.cursor = "pointer";
