@@ -248,14 +248,22 @@ async function synchronizeTerminalOutputs(run) {
   if (!last || last.state !== "completed" || !last.job_id) return;
   const step = state.currentSteps.find((x) => x.step_id === last.step_id);
   if (!step?.tab_path || !findWorkflowTab(step.tab_path)) return;
+  await restoreOutputFromHistory(step, last.job_id);
+  state.syncedRunId = runId;
+}
+
+async function restoreOutputFromHistory(step, jobId) {
+  if (!findWorkflowTab(step.tab_path)) {
+    throw new Error("The workflow tab is closed. Reopen it to view outputs.");
+  }
   const response = await api.fetchApi(
-    "/history/" + encodeURIComponent(last.job_id), { cache: "no-store" }
+    "/history/" + encodeURIComponent(jobId), { cache: "no-store" }
   );
   if (!response.ok) throw new Error("Comfy history HTTP " + response.status);
   const history = await response.json();
-  const result = history?.[last.job_id];
+  const result = history?.[jobId];
   if (!result || result?.status?.status_str !== "success") {
-    throw new Error("Native history not yet available for completed job " + last.job_id);
+    throw new Error("Native history not yet available for completed job " + jobId);
   }
   // Never apply output IDs from B to the canvas for A (or another workflow).
   await openTabAndCompile(step.tab_path, step.workflow_id);
@@ -266,7 +274,25 @@ async function synchronizeTerminalOutputs(run) {
     if (node?.onExecuted) node.onExecuted(output);
   }
   app.canvas?.setDirty?.(true, true);
-  state.syncedRunId = runId;
+}
+
+async function viewSequenceResult(step) {
+  if (state.isRunning || state.monitoringUncertain || state.sequenceEditing) {
+    throw new Error("Wait until the current run finishes.");
+  }
+  if (state.sequenceRunRevision !== state.sequenceRevision ||
+      !state.sequenceRunId || state.sequenceRunId !== state.lastRunId ||
+      state.lastRun?.run_id !== state.sequenceRunId) {
+    throw new Error("The sequence changed since the last run.");
+  }
+  const compiledStep = state.currentSteps.find(s => s.step_id === step.step_id);
+  const attempt = state.lastRun.record?.attempts?.find(a => a.step_id === step.step_id);
+  if (!compiledStep || !attempt || attempt.state !== "completed" ||
+      compiledStep.workflow_id !== step.workflow_id ||
+      compiledStep.tab_path !== step.tab_path) {
+    throw new Error("This workflow has no completed native job in the last run.");
+  }
+  await restoreOutputFromHistory(compiledStep, attempt.job_id);
 }
 
 async function safelySynchronizeOutputs(run) {
@@ -579,6 +605,19 @@ function renderSequence(root) {
       (actualTab ? sequenceStepStatus(step) : "Tab closed");
     label.appendChild(info);
     row.appendChild(label);
+
+    if (actualTab) {
+      row.appendChild(sequenceButton("Open", () => {
+        if (state.isRunning || state.sequenceEditing) {
+          throw new Error("Cannot switch while the Director is running.");
+        }
+        (actualTab.querySelector(".workflow-label") || actualTab).click();
+      }, state.isRunning || state.sequenceEditing));
+    }
+    row.appendChild(sequenceButton("View result",
+      () => viewSequenceResult(step),
+      !actualTab || !sequenceEditable() ||
+      sequenceStepStatus(step) !== "Completed"));
 
     row.appendChild(sequenceButton("↑",
       () => moveSequenceStep(index, -1),
