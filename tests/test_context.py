@@ -49,6 +49,52 @@ def registry(max_entry=128, max_total=256):
 
 
 class ContextRegistryTests(unittest.TestCase):
+    def test_optional_get_reports_missing_outside_a_director_run(self):
+        store = registry()
+        self.assertEqual(store.try_read_any("manual-job", "render1"), (False, None))
+
+    def test_optional_get_reports_missing_for_b_only_and_staged_values(self):
+        store = registry()
+        store.start_run("run")
+        store.begin_step("run", "B", "job-B")
+        self.assertEqual(store.try_read_any("job-B", "render1"), (False, None))
+        store.stage("job-B", "render1", "STRING", "not-committed")
+        self.assertEqual(store.try_read_any("job-B", "render1"), (False, None))
+        store.commit_step("job-B")
+        store.begin_step("run", "C", "job-C")
+        self.assertEqual(
+            store.try_read_any("job-C", "render1"), (True, "not-committed")
+        )
+        store.end_run("run")
+
+    def test_optional_get_clones_committed_values(self):
+        store = registry()
+        store.start_run("run")
+        store.begin_step("run", "A", "job-A")
+        store.stage("job-A", "render1", "IMAGE", {"data": bytearray(b"abc")})
+        store.commit_step("job-A")
+        store.begin_step("run", "B", "job-B")
+        found, value = store.try_read_any("job-B", "render1")
+        self.assertTrue(found)
+        value["data"][0] = ord("X")
+        self.assertEqual(
+            store.try_read_any("job-B", "render1")[1]["data"],
+            bytearray(b"abc"),
+        )
+        store.end_run("run")
+
+    def test_optional_get_refuses_foreign_or_abandoned_jobs(self):
+        store = registry()
+        store.start_run("run")
+        store.begin_step("run", "A", "job-A")
+        with self.assertRaisesRegex(ContextError, "not the active"):
+            store.try_read_any("unrelated-job", "render1")
+        with self.assertRaises(ContextError):
+            store.try_read_any("job-A", " invalid ")
+        store.end_run("run")
+        with self.assertRaisesRegex(ContextError, "ended or aborted"):
+            store.try_read_any("job-A", "render1")
+
     def test_uncommitted_value_is_not_visible_and_commit_makes_it_visible(self):
         store = registry()
         store.start_run("run")
