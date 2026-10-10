@@ -50,6 +50,9 @@ class TorchContextCodec:
     def estimate_size(self, kind: str, value: Any) -> int:
         """Validate and estimate payload bytes before allocating CPU tensors."""
         validate_type(kind)
+        if kind == "VALUE":
+            from .universal_codec import estimate_value
+            return estimate_value(value, max_tensor_bytes=self._max_tensor_bytes)
         if kind == "STRING":
             if not isinstance(value, str):
                 raise ContextError("STRING Context requires a Python string")
@@ -95,6 +98,9 @@ class TorchContextCodec:
 
     def copy_in(self, kind: str, value: Any) -> tuple[Any, int]:
         size = self.estimate_size(kind, value)
+        if kind == "VALUE":
+            from .universal_codec import clone_value
+            return clone_value(value, max_tensor_bytes=self._max_tensor_bytes), size
         if kind == "STRING":
             return value, size
         if kind == "IMAGE":
@@ -115,6 +121,9 @@ class TorchContextCodec:
 
     def copy_out(self, kind: str, value: Any) -> Any:
         validate_type(kind)
+        if kind == "VALUE":
+            from .universal_codec import clone_value
+            return clone_value(value, max_tensor_bytes=self._max_tensor_bytes)
         if kind == "STRING":
             return value
         if kind == "IMAGE":

@@ -1,0 +1,87 @@
+{
+  "id": "c29f37cd-75c7-4f2c-a798-9a76092224bf",
+  "revision": 0,
+  "last_node_id": 2,
+  "last_link_id": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "WorkflowDirectorContextGetUniversal",
+      "pos": [
+        110,
+        170
+      ],
+      "size": [
+        350,
+        140
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "value",
+          "type": "*",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "B · GET FROM CONTEXT",
+      "properties": {
+        "Node name for S&R": "WorkflowDirectorContextGetUniversal"
+      },
+      "widgets_values": [
+        "demo.conditioning"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "WorkflowDirectorTestConditioningSink",
+      "pos": [
+        580,
+        170
+      ],
+      "size": [
+        350,
+        140
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 1
+        }
+      ],
+      "outputs": [],
+      "title": "B · Verify conditioning",
+      "properties": {
+        "Node name for S&R": "WorkflowDirectorTestConditioningSink"
+      },
+      "widgets_values": [
+        "VISUAL_CONDITIONING_SENTINEL"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "CONDITIONING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "workflowRendererVersion": "LG",
+    "frontendVersion": "1.53.10"
+  },
+  "version": 0.4
+}

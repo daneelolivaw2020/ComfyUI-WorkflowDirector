@@ -12,6 +12,14 @@ from .nodes.context_nodes import (
     ContextPutImage, ContextGetImage,
     ContextPutLatent, ContextGetLatent,
 )
+from .nodes.universal_context_nodes import ContextPutUniversal, ContextGetUniversal
+from .nodes.conditioning_lab import (
+    WorkflowDirectorTestConditioningSource, WorkflowDirectorTestConditioningSink,
+    WorkflowDirectorTestConditioningUnsafeSource,
+)
+from .nodes.unknown_socket_lab import (
+    WorkflowDirectorTestMysterySource, WorkflowDirectorTestMysterySink,
+)
 from .workflowdirector import VERSION as __version__
 
 # ComfyUI v0.39.0 still discovers custom-node frontend extensions through
@@ -29,6 +37,10 @@ class WorkflowDirectorExtension(ComfyExtension):
             ContextPutString, ContextGetString,
             ContextPutImage, ContextGetImage,
             ContextPutLatent, ContextGetLatent,
+            ContextPutUniversal, ContextGetUniversal,
+            WorkflowDirectorTestConditioningSource, WorkflowDirectorTestConditioningSink,
+            WorkflowDirectorTestConditioningUnsafeSource,
+            WorkflowDirectorTestMysterySource, WorkflowDirectorTestMysterySink,
         ]
 
 

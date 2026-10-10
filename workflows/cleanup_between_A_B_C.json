@@ -1,0 +1,239 @@
+{
+  "id": "6a3a7fcc-a2ae-4a7f-afbd-5ce30626dbf0",
+  "revision": 0,
+  "last_node_id": 5,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "EmptyImage",
+      "pos": [
+        60,
+        180
+      ],
+      "size": [
+        270,
+        140
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "title": "C · Tiny trigger image",
+      "properties": {
+        "Node name for S&R": "EmptyImage"
+      },
+      "widgets_values": [
+        96,
+        64,
+        1,
+        3116139
+      ]
+    },
+    {
+      "id": 2,
+      "type": "MemoryStatus",
+      "pos": [
+        440,
+        180
+      ],
+      "size": [
+        270,
+        140
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "anything",
+          "shape": 7,
+          "type": "*",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "type": "*",
+          "links": [
+            2
+          ]
+        },
+        {
+          "name": "status_text",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "C · Memory before",
+      "properties": {
+        "Node name for S&R": "MemoryStatus"
+      }
+    },
+    {
+      "id": 3,
+      "type": "MemoryManager",
+      "pos": [
+        760,
+        180
+      ],
+      "size": [
+        315,
+        155
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "anything",
+          "type": "*",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "any",
+          "type": "*",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "title": "C · Memory manager",
+      "properties": {
+        "Node name for S&R": "MemoryManager"
+      },
+      "widgets_values": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "id": 4,
+      "type": "RAMCleanup",
+      "pos": [
+        1130,
+        180
+      ],
+      "size": [
+        270,
+        130
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "anything",
+          "shape": 7,
+          "type": "*",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "type": "*",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "title": "C · RAM cleanup",
+      "properties": {
+        "Node name for S&R": "RAMCleanup"
+      },
+      "widgets_values": [
+        true,
+        true,
+        true,
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "type": "SaveImage",
+      "pos": [
+        1470,
+        180
+      ],
+      "size": [
+        270,
+        140
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 4
+        }
+      ],
+      "outputs": [],
+      "title": "C · Cleanup completion",
+      "properties": {
+        "Node name for S&R": "SaveImage"
+      },
+      "widgets_values": [
+        "WD_Cleanup_Between_Jobs"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "*"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "*"
+    ],
+    [
+      4,
+      4,
+      0,
+      5,
+      0,
+      "*"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "workflowRendererVersion": "LG",
+    "frontendVersion": "1.53.10"
+  },
+  "version": 0.4
+}

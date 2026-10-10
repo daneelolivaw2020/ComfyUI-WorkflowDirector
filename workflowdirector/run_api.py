@@ -49,6 +49,17 @@ def parse_run_request(payload: Mapping[str, Any]) -> tuple[RunPlan, str | None]:
         if not isinstance(workflow, Mapping):
             raise RunRequestError(f"steps[{index}].workflow must be an object")
 
+        # Cleanup stage C is an independent native job. Keep its action
+        # separate from Context writes and reads to preserve A's transaction.
+        if step_id == "C":
+            for node in prompt.values():
+                if (isinstance(node, Mapping) and
+                        str(node.get("class_type", "")).startswith(
+                            "WorkflowDirectorContext")):
+                    raise RunRequestError(
+                        f"steps[{index}] Cleanup must not contain Context nodes"
+                    )
+
         try:
             validate_static_writers(prompt)
         except ContextError as exc:

@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 path = Path(__file__).resolve().parents[1] / "scripts" / "acceptance_probe.py"
 spec = importlib.util.spec_from_file_location("wd_acceptance_probe", path)
@@ -12,7 +13,7 @@ spec.loader.exec_module(probe)
 
 class AcceptancePlansTests(unittest.TestCase):
     def test_all_plans_use_two_distinct_jobs_and_workflow_ids(self):
-        for case in ("string", "image", "latent", "failure"):
+        for case in ("string", "image", "latent", "failure", "universal_image", "universal_conditioning", "universal_unsafe_conditioning"):
             with self.subTest(case=case):
                 steps, expected = probe.plans(case)
                 self.assertEqual(len(steps), 2)
@@ -49,6 +50,49 @@ class AcceptancePlansTests(unittest.TestCase):
         self.assertEqual(b["2"]["class_type"], "SaveLatent")
         self.assertTrue(prefix.startswith("WD_Acceptance_LATENT_"))
 
+    def test_negative_acceptance_requires_exact_native_error(self):
+        job_id = "abcd-123"
+        def simulated_history(path, timeout=10):
+            self.assertEqual(path, "/history/" + job_id)
+            return {job_id: {
+                "status": {
+                    "status_str": "error",
+                    "messages": [[
+                        "execution_error",
+                        {
+                            "node_type": "WorkflowDirectorContextPutUniversal",
+                            "exception_message": (
+                                "Universal Context cannot safely retain a control object"
+                            ),
+                        },
+                    ]],
+                }
+            }}
+        with patch.object(probe, "api", simulated_history):
+            expected = probe.expected_failure_evidence(
+                job_id, node_type="WorkflowDirectorContextPutUniversal",
+                message_fragment="Universal Context cannot safely retain",
+            )
+            self.assertTrue(expected["confirmed"])
+            incorrect = probe.expected_failure_evidence(
+                job_id, node_type="WorkflowDirectorContextPutUniversal",
+                message_fragment="has not been committed",
+            )
+            self.assertFalse(incorrect["confirmed"])
+            wrong_node = probe.expected_failure_evidence(
+                job_id, node_type="WorkflowDirectorContextGetString",
+                message_fragment="Universal Context cannot safely retain",
+            )
+            self.assertFalse(wrong_node["confirmed"])
+
+    def test_negative_acceptance_missing_history_is_not_pass(self):
+        with patch.object(probe, "api", return_value={}):
+            result = probe.expected_failure_evidence(
+                "missing", node_type="WorkflowDirectorContextPutUniversal",
+                message_fragment="Universal Context cannot safely retain",
+            )
+            self.assertFalse(result["confirmed"])
+
     def test_last_step_rss_handles_failure_without_observations(self):
         self.assertIsNone(probe.last_step_rss({}))
         self.assertIsNone(probe.last_step_rss({
@@ -63,6 +107,41 @@ class AcceptancePlansTests(unittest.TestCase):
                 }]
             }
         }), 2.7929)
+
+    def test_universal_image_uses_generic_put_and_get_nodes(self):
+        steps, (key, kind, prefix) = probe.plans("universal_image")
+        self.assertEqual((key, kind), ("accept.universal", "VALUE"))
+        a, b = [s["prompt"] for s in steps]
+        self.assertEqual(a["2"]["class_type"], "WorkflowDirectorContextPutUniversal")
+        self.assertEqual(a["2"]["inputs"]["value"], ["1", 0])
+        self.assertEqual(b["1"]["class_type"], "WorkflowDirectorContextGetUniversal")
+        self.assertEqual(b["2"]["class_type"], "SaveImage")
+        self.assertTrue(prefix.startswith("WD_Acceptance_UNIVERSAL_"))
+
+    def test_universal_conditioning_integrity_probe(self):
+        steps, (key, kind, sentinel) = probe.plans("universal_conditioning")
+        self.assertEqual((key, kind), ("accept.conditioning", "VALUE"))
+        a, b = [s["prompt"] for s in steps]
+        self.assertEqual(a["1"]["class_type"], "WorkflowDirectorTestConditioningSource")
+        self.assertEqual(a["2"]["class_type"], "WorkflowDirectorContextPutUniversal")
+        self.assertEqual(b["1"]["class_type"], "WorkflowDirectorContextGetUniversal")
+        self.assertEqual(b["2"]["class_type"], "WorkflowDirectorTestConditioningSink")
+        self.assertEqual(b["2"]["inputs"]["conditioning"], ["1", 0])
+        self.assertIn(b["2"]["inputs"]["expected_label"], sentinel)
+        self.assertNotIn("WorkflowDirectorTestConditioningSource", str(b))
+
+    def test_universal_unsafe_conditioning_aborts_before_B(self):
+        steps, meta = probe.plans("universal_unsafe_conditioning")
+        self.assertEqual(meta, (None, None, None))
+        a, b = [s["prompt"] for s in steps]
+        self.assertEqual(
+            a["1"]["class_type"], "WorkflowDirectorTestConditioningUnsafeSource"
+        )
+        self.assertEqual(
+            a["2"]["class_type"], "WorkflowDirectorContextPutUniversal"
+        )
+        self.assertEqual(a["2"]["inputs"]["value"], ["1", 0])
+        self.assertEqual(b["1"]["inputs"]["key"], "must.not.run")
 
     def test_failure_plan_only_validated_when_a_fails(self):
         steps, meta = probe.plans("failure")
