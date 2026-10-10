@@ -313,19 +313,26 @@ function enforceUniversalGetOutput(node) {
   // Restore the wildcard on the existing socket without disconnecting links.
   // The actual Python V3 output type is '*' and must remain universal.
   const socket = node?.outputs?.[0];
-  if (!socket || socket.type === "*") return false;
-  console.warn("[WorkflowDirector] Repairing GET universal output type",
-    socket.type, "→ *", "on node", node.id);
-  socket.type = "*";
+  if (!socket) return false;
+  let changed = false;
+  if (socket.type !== "*") {
+    socket.type = "*";
+    changed = true;
+  }
   for (const linkId of socket.links ?? []) {
     const link = node.graph?.links?.[linkId];
     if (link && String(link.origin_id) === String(node.id) &&
-        link.origin_slot === 0) {
+        link.origin_slot === 0 && link.type !== "*") {
       link.type = "*";
+      changed = true;
     }
   }
-  node.setDirtyCanvas?.(true, true);
-  return true;
+  if (changed) {
+    console.warn("[WorkflowDirector] Repaired GET universal wildcard socket or links",
+      "on node", node.id);
+    node.setDirtyCanvas?.(true, true);
+  }
+  return changed;
 }
 
 function protectUniversalGetOutput(node) {
