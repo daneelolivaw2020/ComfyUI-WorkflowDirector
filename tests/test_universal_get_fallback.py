@@ -48,12 +48,15 @@ def get_class(registry):
         Input=lambda name, **kw: (name, kw),
         Output=lambda **kw: ("output", kw),
     )
+    fake_any_type = SimpleNamespace(
+        Output=lambda **kw: ("*", kw),
+    )
     fake_io = SimpleNamespace(
         ComfyNode=object,
         NodeOutput=Output,
         String=fake_type,
         Boolean=fake_type,
-        AnyType=fake_type,
+        AnyType=fake_any_type,
         Schema=lambda **kw: kw,
     )
     import logging
@@ -78,6 +81,8 @@ class UniversalGetFallbackTests(unittest.TestCase):
         self.assertTrue(schema["inputs"][1][1]["optional"])
         self.assertFalse(schema["inputs"][1][1]["default"])
         self.assertEqual(len(schema["outputs"]), 1)
+        self.assertEqual(schema["outputs"][0][0], "*",
+                         "Universal GET output must never regress to STRING")
 
     def test_missing_key_returns_none_plus_visible_warning(self):
         reg = Registry()
