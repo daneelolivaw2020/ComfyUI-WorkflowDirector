@@ -296,6 +296,33 @@ class ContextRegistry:
                 )
             return self._codec.copy_out(entry.kind, entry.value)
 
+    def try_read_any(self, job_id: str, key: str) -> tuple[bool, Any]:
+        """Read optional committed Context without confusing absence and corruption.
+
+        A normal standalone Comfy job has no Director Context: report absence
+        rather than breaking the workflow. While a Director run is active,
+        only its registered native job may read; foreign jobs always fail.
+        Tombstoned job IDs from aborted runs also always fail.
+        """
+        key = validate_key(key)
+        with self._lock:
+            if self._session is None:
+                if job_id in self._retired_job_ids:
+                    raise ContextError(
+                        "This native job belongs to an ended or aborted "
+                        "Director run; refusing a stale Context read"
+                    )
+                return False, None
+
+            self._require_patch(job_id)
+            entry = self._session.values.get(key)
+            if entry is None:
+                return False, None
+
+            # Preserve independent ownership of data. Do not hide codec errors
+            # behind the optional-key fallback.
+            return True, self._codec.copy_out(entry.kind, entry.value)
+
     def commit_step(self, job_id: str) -> tuple[str, ...]:
         """Publish the entire patch only after terminal native Job COMPLETED."""
         with self._lock:
