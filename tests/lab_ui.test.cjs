@@ -13,7 +13,8 @@ const source = fs.readFileSync("web/workflow_director_lab.js", "utf8")
   .replace(/^import \{.*\} from .*;\s*$/gm, "") +
   "\nglobalThis.__lab = { state, capture, prepareCurrentSteps, " +
   "openTabAndCompile, selectedWorkflowTab, announceStepEvents, startRun, " +
-  "availableContextKeys, plannedContextKeys, attachGetKeySelector, synchronizeTerminalOutputs };";
+  "availableContextKeys, plannedContextKeys, attachGetKeySelector, synchronizeTerminalOutputs, " +
+  "addSequenceTab, moveSequenceStep, removeSequenceStep, runSequence, sequenceStepStatus };";
 
 function makeEnvironment(config = {}) {
   const tabs = new Map();
@@ -446,4 +447,136 @@ test("missing GET emits a warning toast and preserves original node.onExecuted",
   node.onExecuted({ text: ["unrelated node UI output"] });
   assert.equal(calls.length, 2);
   assert.equal(e.toasts.length, 1);
+});
+
+test("ordered sequence accepts four independent workflows and compiles fresh at Run", async () => {
+  const e = makeEnvironment();
+  for (let i = 1; i <= 4; i++) {
+    e.makeTab("temp/W" + i, "Workflow " + i, "uuid-" + i, 10 * i);
+    e.select("temp/W" + i);
+    await e.lab.addSequenceTab("temp/W" + i);
+  }
+  assert.equal(e.lab.state.sequence.length, 4);
+  assert.deepEqual(Array.from(e.lab.state.sequence, s => s.step_id),
+    ["W1", "W2", "W3", "W4"]);
+  e.tabs.get("temp/W3").seed = 333;
+  await e.lab.runSequence();
+  assert.equal(e.posted.length, 1);
+  assert.equal(e.posted[0].steps.length, 4);
+  assert.deepEqual(Array.from(e.posted[0].steps, x => x.step_id),
+    ["W1", "W2", "W3", "W4"]);
+  assert.equal(e.posted[0].steps[2].prompt["1"].inputs.seed, 333);
+  assert.equal(e.posted[0].steps[2].tab_path, undefined);
+  assert.equal(e.lab.state.sequence[2].prompt["1"].inputs.seed, 30,
+    "captured draft must stay unchanged after fresh compile");
+});
+
+test("up/down/remove controls preserve stable IDs and change backend order", async () => {
+  const e = makeEnvironment();
+  for (const [path, label, id] of [
+    ["temp/one", "One", "u1"],
+    ["temp/two", "Two", "u2"],
+    ["temp/three", "Three", "u3"],
+  ]) {
+    e.makeTab(path, label, id);
+    e.select(path);
+    await e.lab.addSequenceTab(path);
+  }
+  e.lab.moveSequenceStep(2, -1);
+  e.lab.removeSequenceStep(0);
+  assert.deepEqual(Array.from(e.lab.state.sequence, x => x.step_id),
+    ["W3", "W2"]);
+  assert.deepEqual(Array.from(e.lab.state.sequence, x => x.workflow_id),
+    ["u3", "u2"]);
+  e.select("temp/two");
+  await e.lab.runSequence();
+  assert.deepEqual(Array.from(e.posted[0].steps, x => x.workflow_id),
+    ["u3", "u2"]);
+  e.select("temp/one");
+  await e.lab.addSequenceTab("temp/one");
+  assert.equal(e.lab.state.sequence[2].step_id, "W4",
+    "step ID is not recycled after removal");
+});
+
+test("the same workflow can occur twice in N-step sequence without duplicate job IDs", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/reused", "Reusable", "uuid-same");
+  await e.lab.addSequenceTab("temp/reused");
+  await e.lab.addSequenceTab("temp/reused");
+  await e.lab.runSequence();
+  assert.deepEqual(Array.from(e.posted[0].steps, x => x.workflow_id),
+    ["uuid-same", "uuid-same"]);
+  assert.deepEqual(Array.from(e.posted[0].steps, x => x.step_id),
+    ["W1", "W2"]);
+});
+
+test("N-workflow capture refuses non-active tab rather than capturing stale canvas", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/one", "One", "uuid-one");
+  e.makeTab("temp/two", "Two", "uuid-two");
+  await assert.rejects(
+    () => e.lab.addSequenceTab("temp/two"),
+    /Select the workflow in the ComfyUI top bar/
+  );
+  assert.equal(e.lab.state.sequence.length, 0);
+  assert.equal(e.active(), "temp/one");
+});
+
+test("closed or replaced sequence workflow never submits a stale API prompt", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/one", "One", "uuid-one");
+  e.makeTab("temp/two", "Two", "uuid-two");
+  await e.lab.addSequenceTab("temp/one");
+  e.select("temp/two");
+  await e.lab.addSequenceTab("temp/two");
+  e.tabs.delete("temp/one");
+  await assert.rejects(() => e.lab.runSequence(), /closed or missing/);
+  assert.equal(e.posted.length, 0);
+  e.lab.removeSequenceStep(0);
+  e.tabs.get("temp/two").id = "replacement";
+  await assert.rejects(
+    () => e.lab.runSequence(),
+    /Could not verify that ComfyUI loaded the expected canvas/
+  );
+  assert.equal(e.posted.length, 0);
+});
+
+test("N-workflow planned keys appear in universal GET picker", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/producer", "Producer", "uuid-producer");
+  await e.lab.addSequenceTab("temp/producer");
+  e.lab.state.sequence[0].prompt = {
+    "10": {
+      class_type: "WorkflowDirectorContextPutUniversal",
+      inputs: { key: "render1", value: ["1", 0] },
+    },
+  };
+  assert.ok(e.lab.availableContextKeys().includes("render1"));
+});
+
+test("sequence modifications are blocked during a run and monitoring uncertainty", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/one", "One", "uuid-one");
+  await e.lab.addSequenceTab("temp/one");
+  e.lab.state.isRunning = true;
+  assert.throws(() => e.lab.removeSequenceStep(0), /during a run/);
+  assert.throws(() => e.lab.moveSequenceStep(0, 1), /during a run/);
+  await assert.rejects(
+    () => e.lab.addSequenceTab("temp/one"), /Wait for the current run/
+  );
+  e.lab.state.isRunning = false;
+  e.lab.state.monitoringUncertain = true;
+  await assert.rejects(
+    () => e.lab.runSequence(), /may still be active/
+  );
+});
+
+test("the full N sequence is temporary in browser state, with no save endpoint", () => {
+  assert.match(source, /function renderSequence\(root\)/);
+  assert.match(source, /"Run all \("/);
+  assert.match(source, /"\+ Add current workflow"/);
+  assert.match(source, /sequenceButton\("Remove"/);
+  assert.match(source, /sequenceButton\("↑"/);
+  assert.match(source, /sequenceButton\("↓"/);
+  assert.doesNotMatch(source, /workflowdirector\/sequences\/save/);
 });
