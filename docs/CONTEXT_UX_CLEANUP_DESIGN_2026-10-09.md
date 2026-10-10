@@ -49,3 +49,18 @@ Status: **experimental; implemented on `feature/universal-context-nodes`, not ac
 - Continue to keep the experimental branch separate from the accepted baseline until real memory/cleanup stability has been assessed. Avoid changing the successful universal PUT/GET transport just to chase a visual-only issue already resolved in this scenario.
 
 **Remaining work:** evaluate true GPU/RAM residuals and stability across repeated heavy A→C→B cycles (with the user's already-working cleanup nodes), polish Context key picker / explorer on a real frontend, and provide explicit diagnostics when native cleanup crashes or conflicts with other jobs.
+
+## Standalone B and missing Context fallback — 2026-10-09
+
+**User case:** Run B manually (or B only) without running A's PUT `render1` first. The current GET formerly raised `WorkflowDirectorContextNotFound`, preventing the `rgthree Any Switch` from using a separate `Load Image` input.
+
+**Implemented behavior:**
+- Universal GET now has an optional Boolean `error_if_missing` (**default false** for compatibility with existing saved workflows).
+- If the Context key exists, GET returns a detached copy exactly as before.
+- If the Context key is absent in an active Director run or B is queued manually outside Director, GET returns **`None`** with UI text marker, emits a Python warning, and the frontend displays a nonfatal warning toast. This supports `rgthree Any Switch`, which explicitly chooses the first input whose value is not `None`.
+- If `error_if_missing=true`, GET instead raises a specific `ContextNotFound` error, useful for strict production sequences.
+- Invalid keys, foreign jobs while Director runs, abandoned/retired jobs, and codec corruption **still raise**; optional missing-key mode must not bypass the existing ownership/transactional safety.
+- **Correct B wiring:** GET value directly to `rgthree Any Switch` input 1; `Load Image` fallback to input 2; connect `Preview Image` / processing **after** the switch. Putting `Preview Image` between GET and switch can crash on `None` before the fallback runs.
+- There is no persistent Context across runs: B-only always sees an empty Context unless the same Director run committed that key before B. The fallback is not a checkpoint mechanism.
+
+**Validation:** backend tests and browser-controller tests run in CI; real ComfyUI/Colab acceptance of `None` through rgthree switch and UI toast is still needed. GET typed legacy nodes remain strict; only `WorkflowDirectorContextGetUniversal` gained optional semantics.
