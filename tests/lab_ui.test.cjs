@@ -709,11 +709,15 @@ test("GET universal fixes serialized STRING output sockets without dropping IMAG
   node.outputs[0].type = "STRING";
   node.onConnectionsChange(2, 0, true, link);
   assert.equal(node.outputs[0].type, "*", "later connections must not force STRING");
+  // The socket may already be '*' while the serialized link is still STRING.
+  link.type = "STRING";
+  node.onConnectionsChange(2, 0, true, link);
+  assert.equal(link.type, "*", "stale links must be repaired independently");
   assert.equal(connectionsCalls, 1, "original connection callback still called");
 
   ext.nodeCreated(node);
   node.onConnectionsChange(2, 0, true, link);
-  assert.equal(connectionsCalls, 2, "never install duplicate wrappers");
+  assert.equal(connectionsCalls, 3, "never install duplicate wrappers");
   assert.equal(node.widgets.length, 2, "key picker still installed only once");
 });
 
