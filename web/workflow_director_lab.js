@@ -274,6 +274,24 @@ async function safelySynchronizeOutputs(run) {
 
 function attachGetKeySelector(node) {
   if (!node?.addWidget || !node.widgets) return;
+  // Show a nonfatal warning when GET returns None for a missing Context key.
+  // Keep normal node output processing intact for ComfyUI's own widgets.
+  if (!node.__wdContextWarningInstalled) {
+    const originalOnExecuted = node.onExecuted;
+    node.onExecuted = function (output, ...args) {
+      const result = originalOnExecuted?.call(this, output, ...args);
+      for (const message of output?.text ?? []) {
+        if (typeof message !== "string" ||
+            !message.startsWith("WD_CONTEXT_MISSING:")) continue;
+        const key = message.slice("WD_CONTEXT_MISSING:".length);
+        notify("warn", "Context key unavailable",
+          "'" + key + "' is not in this run. GET returned None; a connected " +
+          "Any Switch can use the fallback input.");
+      }
+      return result;
+    };
+    node.__wdContextWarningInstalled = true;
+  }
   const keyWidget = node.widgets.find((widget) => widget.name === "key");
   if (!keyWidget || node.widgets.some((widget) => widget.name === "context_key_picker")) return;
   const empty = "Choose Context key…";
