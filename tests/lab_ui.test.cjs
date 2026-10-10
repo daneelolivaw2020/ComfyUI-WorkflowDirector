@@ -419,3 +419,31 @@ test("Cleanup option remains opt-in rather than being inserted in A → B", () =
   assert.match(source, /"Run A → B"/);
   assert.match(source, /startRun\(\[state\.A, state\.B\]\)/);
 });
+
+
+test("missing GET emits a warning toast and preserves original node.onExecuted", () => {
+  const e = makeEnvironment();
+  const calls = [];
+  const widgets = [{ name: "key", value: "render1" }];
+  const node = {
+    comfyClass: "WorkflowDirectorContextGetUniversal",
+    widgets,
+    onExecuted(output) { calls.push(output); },
+    addWidget(kind, name, value, callback, options) {
+      const item = { kind, name, value, callback, options };
+      widgets.push(item);
+      return item;
+    },
+  };
+  const ext = e.extensions.find(x => x.name === "WorkflowDirector.ContextKeyPicker");
+  ext.nodeCreated(node);
+  ext.nodeCreated(node); // No wrapper duplication on re-render.
+  node.onExecuted({ text: ["WD_CONTEXT_MISSING:render1"] });
+  assert.equal(calls.length, 1);
+  assert.equal(e.toasts.length, 1);
+  assert.equal(e.toasts[0].severity, "warn");
+  assert.match(e.toasts[0].detail, /render1/);
+  node.onExecuted({ text: ["unrelated node UI output"] });
+  assert.equal(calls.length, 2);
+  assert.equal(e.toasts.length, 1);
+});
