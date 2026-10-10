@@ -14,7 +14,7 @@ const source = fs.readFileSync("web/workflow_director_lab.js", "utf8")
   "\nglobalThis.__lab = { state, capture, prepareCurrentSteps, " +
   "openTabAndCompile, selectedWorkflowTab, announceStepEvents, startRun, " +
   "availableContextKeys, plannedContextKeys, attachGetKeySelector, synchronizeTerminalOutputs, " +
-  "addSequenceTab, moveSequenceStep, removeSequenceStep, runSequence, sequenceStepStatus, viewSequenceResult };";
+  "addSequenceTab, moveSequenceStep, removeSequenceStep, runSequence, runSequenceStep, sequenceStepStatus, viewSequenceResult };";
 
 function makeEnvironment(config = {}) {
   const tabs = new Map();
@@ -644,4 +644,27 @@ test("the N-workflow sequence uses the existing backend without automatically in
   await e.lab.runSequence();
   assert.deepEqual(Array.from(e.posted[0].steps, x => x.step_id), ["W1", "W2"]);
   assert.equal(e.posted[0].steps.some(x => x.step_id === "C"), false);
+});
+
+
+test("Run only on an N-sequence row queues that workflow without preceding PUTs", async () => {
+  const e = makeEnvironment();
+  e.makeTab("temp/A", "Producer", "uuid-producer");
+  e.makeTab("temp/B", "Consumer with fallback", "uuid-consumer");
+  await e.lab.addSequenceTab("temp/A");
+  e.select("temp/B");
+  await e.lab.addSequenceTab("temp/B");
+  e.tabs.get("temp/B").seed = 23;
+  await e.lab.runSequenceStep(e.lab.state.sequence[1]);
+  assert.equal(e.posted.length, 1);
+  assert.equal(e.posted[0].steps.length, 1);
+  assert.equal(e.posted[0].steps[0].workflow_id, "uuid-consumer");
+  assert.equal(e.posted[0].steps[0].prompt["1"].inputs.seed, 23);
+  assert.equal(e.posted[0].steps[0].step_id, "W2");
+});
+
+test("legacy controls retain their open state across frequent panel refreshes", () => {
+  assert.match(source, /legacy\.open = state\.legacyExpanded/);
+  assert.match(source, /state\.legacyExpanded = legacy\.open/);
+  assert.match(source, /"Run only"/);
 });
