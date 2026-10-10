@@ -668,3 +668,66 @@ test("legacy controls retain their open state across frequent panel refreshes", 
   assert.match(source, /state\.legacyExpanded = legacy\.open/);
   assert.match(source, /"Run only"/);
 });
+
+
+test("GET universal fixes serialized STRING output sockets without dropping IMAGE links", () => {
+  const e = makeEnvironment();
+  const link = {
+    origin_id: 109, origin_slot: 0,
+    target_id: 200, target_slot: 0, type: "STRING",
+  };
+  let configureCalls = 0;
+  let connectionsCalls = 0;
+  const node = {
+    id: 109, type: "WorkflowDirectorContextGetUniversal",
+    outputs: [{ name: "value", type: "STRING", links: [77] }],
+    graph: { links: { 77: link } },
+    widgets: [{ name: "key", value: "render1" }],
+    onConfigure() { configureCalls += 1; },
+    onConnectionsChange() { connectionsCalls += 1; },
+    addWidget(kind, name, value, callback, options) {
+      const item = { kind, name, value, callback, options };
+      this.widgets.push(item);
+      return item;
+    },
+  };
+  const ext = e.extensions.find(x => x.name === "WorkflowDirector.ContextKeyPicker");
+  ext.nodeCreated(node);
+  assert.equal(node.outputs[0].type, "*",
+    "GET must always have a universal socket even after old saved STRING links");
+  assert.equal(link.type, "*", "a stale serialized STRING link must not block IMAGE");
+  assert.equal(node.outputs[0].name, "value");
+  assert.deepEqual(node.outputs[0].links, [77], "never disconnect existing links");
+
+  node.outputs[0].type = "STRING";
+  link.type = "STRING";
+  node.onConfigure({ outputs: [{ type: "STRING" }] });
+  assert.equal(node.outputs[0].type, "*", "rehydrating stale workflow must not stick");
+  assert.equal(link.type, "*");
+  assert.equal(configureCalls, 1, "original Comfy onConfigure still called");
+
+  node.outputs[0].type = "STRING";
+  node.onConnectionsChange(2, 0, true, link);
+  assert.equal(node.outputs[0].type, "*", "later connections must not force STRING");
+  assert.equal(connectionsCalls, 1, "original connection callback still called");
+
+  ext.nodeCreated(node);
+  node.onConnectionsChange(2, 0, true, link);
+  assert.equal(connectionsCalls, 2, "never install duplicate wrappers");
+  assert.equal(node.widgets.length, 2, "key picker still installed only once");
+});
+
+test("GET universal guard does not change PUT MatchType or typed Context Get nodes", () => {
+  const e = makeEnvironment();
+  const ext = e.extensions.find(x => x.name === "WorkflowDirector.ContextKeyPicker");
+  const ordinary = [
+    { type: "WorkflowDirectorContextPutUniversal", outputs: [{ type: "COMFY_MATCHTYPE_V3" }] },
+    { type: "WorkflowDirectorContextGetString", outputs: [{ type: "STRING" }] },
+    { type: "WorkflowDirectorContextGetLatent", outputs: [{ type: "LATENT" }] },
+  ];
+  for (const node of ordinary) {
+    ext.nodeCreated(node);
+  }
+  assert.deepEqual(ordinary.map(x => x.outputs[0].type),
+    ["COMFY_MATCHTYPE_V3", "STRING", "LATENT"]);
+});
