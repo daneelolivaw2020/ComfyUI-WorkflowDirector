@@ -307,6 +307,49 @@ async function safelySynchronizeOutputs(run) {
   }
 }
 
+function enforceUniversalGetOutput(node) {
+  // ComfyUI/LiteGraph may restore a stale serialized output socket type
+  // (e.g. STRING) from a saved workflow, overriding the V3 AnyType '*' schema.
+  // Restore the wildcard on the existing socket without disconnecting links.
+  // The actual Python V3 output type is '*' and must remain universal.
+  const socket = node?.outputs?.[0];
+  if (!socket || socket.type === "*") return false;
+  console.warn("[WorkflowDirector] Repairing GET universal output type",
+    socket.type, "→ *", "on node", node.id);
+  socket.type = "*";
+  for (const linkId of socket.links ?? []) {
+    const link = node.graph?.links?.[linkId];
+    if (link && String(link.origin_id) === String(node.id) &&
+        link.origin_slot === 0) {
+      link.type = "*";
+    }
+  }
+  node.setDirtyCanvas?.(true, true);
+  return true;
+}
+
+function protectUniversalGetOutput(node) {
+  if (!node) return;
+  if (!node.__wdUniversalOutputGuardInstalled) {
+    // Saved workflows may configure sockets after nodeCreated. Normalize both
+    // immediately and after any subsequent LiteGraph rehydration.
+    const originalConfigure = node.onConfigure;
+    node.onConfigure = function (...args) {
+      const result = originalConfigure?.apply(this, args);
+      enforceUniversalGetOutput(this);
+      return result;
+    };
+    const originalConnectionsChange = node.onConnectionsChange;
+    node.onConnectionsChange = function (...args) {
+      const result = originalConnectionsChange?.apply(this, args);
+      enforceUniversalGetOutput(this);
+      return result;
+    };
+    node.__wdUniversalOutputGuardInstalled = true;
+  }
+  enforceUniversalGetOutput(node);
+}
+
 function attachGetKeySelector(node) {
   if (!node?.addWidget || !node.widgets) return;
   // Show a nonfatal warning when GET returns None for a missing Context key.
@@ -1169,6 +1212,7 @@ app.registerExtension({
   nodeCreated(node) {
     if (node?.comfyClass === "WorkflowDirectorContextGetUniversal" ||
         node?.type === "WorkflowDirectorContextGetUniversal") {
+      protectUniversalGetOutput(node);
       attachGetKeySelector(node);
     }
   },
