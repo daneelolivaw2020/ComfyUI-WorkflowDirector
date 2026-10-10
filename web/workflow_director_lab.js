@@ -391,68 +391,44 @@ function sequenceChanged() {
 
 async function addSequenceTab(path) {
   if (!sequenceEditable()) {
-    throw new Error("Wait for the current run or tab capture to finish.");
-  }
-  if (!path || !findWorkflowTab(path)) {
-    throw new Error("Choose an open workflow tab to add.");
+    throw new Error("Wait for the current run or capture to finish.");
   }
 
+  // Capture ONLY the currently loaded tab. Automatically switching to an
+  // arbitrary tab risks capturing the previous canvas before its asynchronous
+  // load has finished, without having a trusted expected UUID to compare.
+  const active = selectedWorkflowTab();
+  if (active.dataset.workflowPath !== path) {
+    throw new Error("Select the workflow in the ComfyUI top bar before adding it.");
+  }
   state.sequenceEditing = true;
   refreshAllPanels();
-  let selected = null;
   try {
-    // Capture from the real canvas. Do not use an old API prompt or assume
-    // that a tab's label identifies the workflow.
-    const original = selectedWorkflowTab();
-    const originalPath = original.dataset.workflowPath;
-    const originalId = assertCompiled(await app.graphToPrompt()).workflow.id;
-    try {
-      if (originalPath === path) {
-        const compiled = snapshotCompiled(assertCompiled(await app.graphToPrompt()));
-        selected = {
-          compiled, tab: original,
-        };
-      } else {
-        // A tab not yet captured has no verified UUID. Wait for its canvas to
-        // load, then ensure the active topbar tab AND compiled canvas agree.
-        const tab = findWorkflowTab(path);
-        (tab.querySelector(".workflow-label") || tab).click();
-        const deadline = Date.now() + 12000;
-        while (Date.now() < deadline) {
-          const active = selectedWorkflowTab();
-          if (active.dataset.workflowPath === path) {
-            const compiled = await app.graphToPrompt();
-            if (compiled?.workflow?.id && compiled?.output) {
-              selected = {
-                compiled: snapshotCompiled(assertCompiled(compiled)),
-                tab: active,
-              };
-              break;
-            }
-          }
-          await sleep(150);
-        }
-        if (!selected) {
-          throw new Error("Could not capture the selected workflow canvas. No step added.");
-        }
-      }
-    } finally {
-      if (selectedWorkflowTab().dataset.workflowPath !== originalPath ||
-          assertCompiled(await app.graphToPrompt()).workflow.id !== originalId) {
-        await openTabAndCompile(originalPath, originalId);
-      }
+    // A short settle plus two consistent compilations avoids common
+    // selected-tab-change races without guessing from a tab display name.
+    await sleep(100);
+    const current = selectedWorkflowTab();
+    if (current.dataset.workflowPath !== path) {
+      throw new Error("Workflow tab changed during capture. Nothing was added.");
+    }
+    const first = snapshotCompiled(assertCompiled(await app.graphToPrompt()));
+    await sleep(100);
+    const second = snapshotCompiled(assertCompiled(await app.graphToPrompt()));
+    if (selectedWorkflowTab().dataset.workflowPath !== path ||
+        first.workflow.id !== second.workflow.id) {
+      throw new Error("The selected workflow canvas was still loading. Retry Add.");
     }
     const stepId = "W" + state.nextSequenceId++;
     state.sequence.push({
       step_id: stepId,
-      workflow_id: selected.compiled.workflow.id,
-      name: tabName(selected.tab),
+      workflow_id: second.workflow.id,
+      name: tabName(current),
       tab_path: path,
-      prompt: selected.compiled.output,
-      workflow: selected.compiled.workflow,
+      prompt: second.output,
+      workflow: second.workflow,
     });
     sequenceChanged();
-    notify("success", "Workflow added to sequence", tabName(selected.tab));
+    notify("success", "Workflow added to sequence", tabName(current));
   } finally {
     state.sequenceEditing = false;
     refreshAllPanels();
@@ -540,41 +516,22 @@ function renderSequence(root) {
   controls.style.flexWrap = "wrap";
   controls.style.gap = "7px";
 
-  const tabPicker = document.createElement("select");
-  tabPicker.setAttribute("aria-label", "Open workflow tab to add");
-  tabPicker.style.maxWidth = "min(440px, 100%)";
-  tabPicker.style.minWidth = "170px";
-  tabPicker.style.flex = "1";
-  const tabs = workflowTabs();
-  const paths = tabs.map(t => t.dataset.workflowPath);
-  const active = tabs.find(t => {
-    try { return selectedWorkflowTab().dataset.workflowPath === t.dataset.workflowPath; }
-    catch { return false; }
-  });
-  if (!paths.includes(state.sequenceSelectedPath)) {
-    state.sequenceSelectedPath = active?.dataset.workflowPath ?? paths[0] ?? null;
-  }
-  if (!tabs.length) {
-    const opt = document.createElement("option");
-    opt.textContent = "Open a workflow tab first";
-    tabPicker.appendChild(opt);
-  }
-  for (const tab of tabs) {
-    const opt = document.createElement("option");
-    opt.value = tab.dataset.workflowPath;
-    opt.textContent = tabName(tab);
-    if (opt.value === state.sequenceSelectedPath) opt.selected = true;
-    tabPicker.appendChild(opt);
-  }
-  tabPicker.disabled = !sequenceEditable() || !tabs.length;
-  tabPicker.addEventListener("change", () => {
-    state.sequenceSelectedPath = tabPicker.value;
-  });
-  controls.appendChild(tabPicker);
+  const activeTab = (() => {
+    try { return selectedWorkflowTab(); } catch { return null; }
+  })();
+  const selectedLabel = document.createElement("span");
+  selectedLabel.style.flex = "1";
+  selectedLabel.style.minWidth = "170px";
+  selectedLabel.style.fontSize = "12px";
+  selectedLabel.style.alignSelf = "center";
+  selectedLabel.textContent = activeTab
+    ? "Current ComfyUI tab: " + tabName(activeTab)
+    : "Select a workflow in the ComfyUI top bar";
+  controls.appendChild(selectedLabel);
   controls.appendChild(
-    sequenceButton("+ Add workflow",
-      () => addSequenceTab(state.sequenceSelectedPath),
-      !sequenceEditable() || !tabs.length)
+    sequenceButton("+ Add current workflow",
+      () => addSequenceTab(selectedWorkflowTab().dataset.workflowPath),
+      !sequenceEditable() || !activeTab)
   );
   controls.appendChild(
     sequenceButton("Run all (" + state.sequence.length + ")",
