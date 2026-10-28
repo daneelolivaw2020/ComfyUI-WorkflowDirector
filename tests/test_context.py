@@ -422,6 +422,43 @@ def plan():
 
 
 class ContextLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_queue_recovery_keeps_transaction_and_late_writes_until_commit(self):
+        from workflowdirector.core import AdapterTransportError
+        store = registry()
+        clock = [0.0]
+        test = self
+        class RecoveringAdapter(NativeJobAdapterWithContext):
+            queue_calls = 0
+            polls = 0
+            async def get_active_job_ids(self):
+                self.queue_calls += 1
+                if self.queue_calls == 3:
+                    raise AdapterTransportError("temporary timeout during A")
+                return set()
+            async def get_job_state(self, prompt_id):
+                self.polls += 1
+                if self.polls == 1:
+                    return JobState.IN_PROGRESS
+                return JobState.COMPLETED
+        adapter = RecoveringAdapter(store)
+        async def sleep(seconds):
+            clock[0] += seconds
+            test.assertFalse(store.is_idle(), "Context must stay alive while retrying")
+            test.assertEqual(len(adapter.submitted), 1, "B cannot start during uncertainty")
+            # A native callback is allowed to write before the job completes.
+            if "late" not in store._patches[adapter.submitted[0]].writes:
+                store.stage(adapter.submitted[0], "late", "STRING", "late-A")
+        engine = DirectorEngine(adapter, context=store, sleep=sleep, clock=lambda: clock[0])
+        service = DirectorRunService(engine, context=store)
+        p = plan()
+        await service.start(p)
+        record = await service.wait(p.run_id)
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(adapter.b_read_value, "from-A")
+        self.assertIn("late", record.context_manifest)
+        self.assertEqual(len(adapter.submitted), 2)
+        self.assertTrue(store.is_idle(), "Context is released after terminal success")
+
     async def test_only_completed_A_patch_can_be_consumed_by_B(self):
         store = registry()
         adapter = NativeJobAdapterWithContext(store)

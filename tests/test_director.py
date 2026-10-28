@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 import uuid
@@ -50,7 +51,8 @@ class FakeAdapter:
         self.last_state = {}
         self.transient_status_errors = dict(transient_status_errors or {})
         self.active_job_sequences = [
-            set(items) for items in (active_job_sequences or [])
+            items if isinstance(items, Exception) else set(items)
+            for items in (active_job_sequences or [])
         ]
 
     async def submit_prompt(self, *, prompt, workflow, prompt_id, client_id):
@@ -64,7 +66,10 @@ class FakeAdapter:
 
     async def get_active_job_ids(self):
         if self.active_job_sequences:
-            return self.active_job_sequences.pop(0)
+            result = self.active_job_sequences.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
         return set()
 
     async def get_job_state(self, prompt_id):
@@ -294,6 +299,116 @@ class DirectorEngineTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(record.phase, RunPhase.FAILED)
         self.assertEqual(record.failure_code, "QUEUE_NOT_EXCLUSIVE")
+        self.assertEqual(adapter.submissions, [])
+
+    async def test_queue_transport_failure_before_submission_is_retried(self):
+        plan = make_plan()
+        ids = [make_job_id(plan.run_id, step, 1) for step in ("A", "B")]
+        adapter = FakeAdapter(
+            {job: [JobState.COMPLETED] for job in ids},
+            active_job_sequences=[AdapterTransportError("temporary"), set()],
+        )
+        record = await make_engine(adapter).run(plan)
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(adapter.submissions, ids)
+        self.assertTrue(any(e.kind == "queue_state_recovered" for e in record.events))
+
+    async def test_queue_transport_failure_during_job_never_resubmits(self):
+        plan = make_plan()
+        a, b = [make_job_id(plan.run_id, step, 1) for step in ("A", "B")]
+        adapter = FakeAdapter(
+            {a: [JobState.IN_PROGRESS, JobState.COMPLETED], b: [JobState.COMPLETED]},
+            active_job_sequences=[set(), set(), AdapterTransportError("temporary"), {a}],
+        )
+        record = await make_engine(adapter).run(plan)
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(adapter.submissions, [a, b])
+        events = [e.kind for e in record.events]
+        self.assertIn("queue_state_transport_error", events)
+        self.assertIn("queue_state_recovered", events)
+
+    async def test_recovered_queue_still_rejects_foreign_job(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        adapter = FakeAdapter(
+            {a: [JobState.IN_PROGRESS]},
+            active_job_sequences=[set(), set(), AdapterTransportError("temporary"), {a, "foreign"}],
+        )
+        record = await make_engine(adapter).run(plan)
+        self.assertEqual(record.failure_code, "QUEUE_INTERFERENCE")
+        self.assertEqual(adapter.submissions, [a])
+
+    async def test_persistent_queue_failure_respects_job_deadline(self):
+        plan = make_plan()
+        a = make_job_id(plan.run_id, "A", 1)
+        adapter = FakeAdapter(
+            {a: [JobState.IN_PROGRESS]},
+            active_job_sequences=[set(), set()] + [AdapterTransportError("offline") for _ in range(100)],
+        )
+        clock = FakeTime()
+        engine = DirectorEngine(adapter, sleep=clock.sleep, clock=clock.clock,
+                                poll_interval_seconds=0.1, job_timeout_seconds=0.3)
+        record = await engine.run(plan)
+        self.assertEqual(record.failure_code, "QUEUE_STATE_UNCERTAIN")
+        self.assertIn("may still be running", record.failure_detail)
+        self.assertLessEqual(clock.now, 0.3)
+        self.assertEqual(adapter.submissions, [a])
+
+    async def test_queue_recovery_budget_expires_before_first_submission(self):
+        adapter = FakeAdapter({}, active_job_sequences=[
+            AdapterTransportError("offline") for _ in range(100)
+        ])
+        clock = FakeTime()
+        engine = DirectorEngine(adapter, sleep=clock.sleep, clock=clock.clock,
+                                poll_interval_seconds=0.1, queue_recovery_timeout_seconds=0.2)
+        record = await engine.run(make_plan())
+        self.assertEqual(record.failure_code, "QUEUE_STATE_UNCERTAIN")
+        self.assertLessEqual(clock.now, 0.2)
+        self.assertEqual(adapter.submissions, [])
+
+    async def test_queue_protocol_error_is_not_retried(self):
+        adapter = FakeAdapter({}, active_job_sequences=[RuntimeError("invalid response")])
+        record = await make_engine(adapter).run(make_plan())
+        self.assertEqual(record.failure_code, "QUEUE_STATE_FAILED")
+        self.assertEqual(adapter.submissions, [])
+        self.assertFalse(any(e.kind == "queue_state_transport_error" for e in record.events))
+
+    async def test_slow_initial_timeout_still_gets_a_recovery_budget(self):
+        clock = FakeTime()
+        plan = make_plan()
+        ids = [make_job_id(plan.run_id, step, 1) for step in ("A", "B")]
+        class SlowFirstLookup(FakeAdapter):
+            calls = 0
+            async def get_active_job_ids(self):
+                self.calls += 1
+                if self.calls == 1:
+                    clock.now += 30.0  # The adapter's normal HTTP timeout.
+                    raise AdapterTransportError("initial HTTP timeout")
+                return set()
+        adapter = SlowFirstLookup({job: [JobState.COMPLETED] for job in ids})
+        engine = DirectorEngine(adapter, sleep=clock.sleep, clock=clock.clock)
+        record = await engine.run(plan)
+        self.assertEqual(record.phase, RunPhase.COMPLETED)
+        self.assertEqual(adapter.submissions, ids)
+
+    async def test_a_hanging_recovery_lookup_is_cancelled_at_its_budget(self):
+        class HangingRecovery(FakeAdapter):
+            calls = 0
+            lookup_cancelled = False
+            async def get_active_job_ids(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise AdapterTransportError("temporary timeout")
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    self.lookup_cancelled = True
+        adapter = HangingRecovery({})
+        engine = DirectorEngine(adapter, poll_interval_seconds=0.001,
+                                queue_recovery_timeout_seconds=0.02)
+        record = await asyncio.wait_for(engine.run(make_plan()), timeout=1.0)
+        self.assertEqual(record.failure_code, "QUEUE_STATE_UNCERTAIN")
+        self.assertTrue(adapter.lookup_cancelled)
         self.assertEqual(adapter.submissions, [])
 
     async def test_foreign_job_during_execution_stops_run(self):

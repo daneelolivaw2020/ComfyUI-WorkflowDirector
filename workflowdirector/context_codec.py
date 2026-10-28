@@ -27,6 +27,8 @@ class TorchContextCodec:
             raise ContextError(
                 "IMAGE/LATENT must contain Torch tensors; model objects are forbidden"
             )
+        if type(value) is not torch.Tensor:
+            raise ContextError("IMAGE/LATENT tensor subclasses require a registered safe adapter")
         if value.layout != torch.strided:
             raise ContextError("Only dense strided tensors are currently supported")
         if value.is_sparse or value.is_quantized or value.device.type == "meta":
@@ -92,6 +94,10 @@ class TorchContextCodec:
         # Always copy, even when already on CPU. Comfy's source tensor is
         # not owned by Context and may still reference a live execution.
         copy = value.detach().to(device="cpu", copy=True).contiguous()
+        if copy is value:
+            raise ContextError("Context tensor copy must be independent of its source")
+        if self._estimate_tensor(copy) != size:
+            raise ContextError("Context tensor copy changed its payload size")
         if copy.device.type != "cpu" or copy.requires_grad:
             raise ContextError("Context tensor must be detached and CPU resident")
         return copy, size

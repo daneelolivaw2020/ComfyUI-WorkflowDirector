@@ -91,6 +91,35 @@ class TorchContextCodecTests(unittest.TestCase):
                 "LATENT", {"samples": object()}
             )
 
+    def test_typed_tensors_reject_subclasses_before_custom_methods(self):
+        class TensorWithOwner(FakeTensor):
+            def numel(self):
+                raise AssertionError("Subclass methods must not run")
+            def detach(self):
+                raise AssertionError("Subclass methods must not run")
+
+        tensor = TensorWithOwner([1, 2])
+        cases = [("IMAGE", tensor), ("LATENT", {"samples": tensor}),
+                 ("LATENT", {"samples": FakeTensor([1]), "noise_mask": tensor})]
+        for kind, value in cases:
+            with self.subTest(kind=kind, value=value):
+                with self.assertRaisesRegex(ContextError, "tensor subclasses"):
+                    self.codec.estimate_size(kind, value)
+                with self.assertRaisesRegex(ContextError, "tensor subclasses"):
+                    self.codec.copy_in(kind, value)
+
+    def test_typed_tensor_copy_rejects_alias_and_unsafe_results(self):
+        source = FakeTensor([1, 2], device="cpu", requires_grad=False)
+        with patch.object(FakeTensor, "detach", lambda value: value):
+            with patch.object(FakeTensor, "to", lambda value, **kw: value):
+                with self.assertRaisesRegex(ContextError, "independent"):
+                    self.codec.copy_in("IMAGE", source)
+        class TensorWithOwner(FakeTensor):
+            pass
+        with patch.object(FakeTensor, "to", lambda value, **kw: TensorWithOwner([1, 2], "cpu", False)):
+            with self.assertRaisesRegex(ContextError, "tensor subclasses"):
+                self.codec.copy_in("IMAGE", source)
+
     def test_native_empty_latent_image_downscale_ratio_roundtrips(self):
         source = {
             "samples": FakeTensor([0, 0, 0, 0]),

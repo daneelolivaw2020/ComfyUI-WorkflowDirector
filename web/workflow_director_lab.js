@@ -26,6 +26,7 @@ const state = {
   monitoringUncertain: false,
   statusWarning: "",
   liveContext: null,
+  contextPollToken: 0,
   syncedRunId: null,
 };
 
@@ -215,9 +216,13 @@ function availableContextKeys() {
 }
 
 async function inspectLiveContext() {
+  const token = ++state.contextPollToken;
   const response = await api.fetchApi("/workflowdirector/context", { cache: "no-store" });
   if (!response.ok) throw new Error("Context inspection HTTP " + response.status);
-  state.liveContext = await response.json();
+  const context = await response.json();
+  // A terminal status or a newer run invalidates in-flight Context snapshots.
+  if (token !== state.contextPollToken) return context;
+  state.liveContext = context;
   refreshAllPanels();
   return state.liveContext;
 }
@@ -828,6 +833,8 @@ async function fetchRunStatus(runId) {
   state.lastRunId = runId;
   state.lastRun = statusBody;
   if (["completed", "failed", "cancelled"].includes(statusBody?.record?.phase)) {
+    state.contextPollToken += 1;
+    state.liveContext = null;
     state.monitoringUncertain = false;
     state.statusWarning = "";
   }
@@ -880,6 +887,7 @@ async function startRun(steps, { allowRepeats = false, source = "legacy" } = {})
     state.currentSteps = preparedSteps;
     state.syncedRunId = null;
     state.liveContext = null;
+    state.contextPollToken += 1;
     state.announcedEvents = new Set();
     state.statusWarning = "";
     // Preassign and retain the run UUID before submission so a lost HTTP

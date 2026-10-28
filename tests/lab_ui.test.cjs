@@ -13,7 +13,7 @@ const source = fs.readFileSync("web/workflow_director_lab.js", "utf8")
   .replace(/^import \{.*\} from .*;\s*$/gm, "") +
   "\nglobalThis.__lab = { state, capture, prepareCurrentSteps, " +
   "openTabAndCompile, selectedWorkflowTab, announceStepEvents, startRun, " +
-  "availableContextKeys, plannedContextKeys, attachGetKeySelector, synchronizeTerminalOutputs, " +
+  "availableContextKeys, plannedContextKeys, attachGetKeySelector, synchronizeTerminalOutputs, fetchRunStatus, inspectLiveContext, " +
   "addSequenceTab, moveSequenceStep, removeSequenceStep, runSequence, runSequenceStep, sequenceStepStatus, viewSequenceResult };";
 
 function makeEnvironment(config = {}) {
@@ -101,7 +101,7 @@ function makeEnvironment(config = {}) {
   };
   vm.runInNewContext(source, sandbox, { filename: "workflow_director_lab.js" });
   return {
-    lab: sandbox.__lab, toasts, tabs, posted, extensions, app, makeTab,
+    lab: sandbox.__lab, toasts, tabs, posted, extensions, app, api, makeTab,
     select(path) { activePath = path; },
     active() { return activePath; },
   };
@@ -335,6 +335,37 @@ test("Context inspector never supplies a live payload; completed run keys remain
   // A new native Director run must not reuse the old key's value.
   e.lab.state.lastRun = null;
   assert.equal(e.lab.availableContextKeys().includes("demo.mystery"), false);
+});
+
+test("terminal phases release live Context while keeping historical metadata", async () => {
+  for (const phase of ["completed", "failed", "cancelled"]) {
+    const e = makeEnvironment();
+    e.lab.state.liveContext = { active: true, run_id: "r", committed: { stale: {} } };
+    e.api.fetchApi = async () => ({ ok: true, json: async () => ({ run_id: "r", record: {
+      phase, events: [], context_manifest: { saved: { type: "VALUE", bytes: 12 } },
+      context_inspection: { saved: { type: "VALUE", bytes: 12 } },
+    } }) });
+    await e.lab.fetchRunStatus("r");
+    assert.equal(e.lab.state.liveContext, null, phase);
+    assert.equal(e.lab.availableContextKeys().includes("stale"), false);
+    assert.equal(e.lab.availableContextKeys().includes("saved"), true);
+    assert.equal(e.lab.state.lastRun.record.context_inspection.saved.bytes, 12);
+  }
+});
+
+test("a delayed Context response cannot restore LIVE state after a terminal poll", async () => {
+  const e = makeEnvironment();
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  e.api.fetchApi = async path => path === "/workflowdirector/context"
+    ? { ok: true, json: () => pending }
+    : { ok: true, json: async () => ({ run_id: "r", record: { phase: "completed", events: [] } }) };
+  const inspection = e.lab.inspectLiveContext();
+  await e.lab.fetchRunStatus("r");
+  release({ active: true, run_id: "r", committed: { stale: {} } });
+  await inspection;
+  assert.equal(e.lab.state.liveContext, null);
+  assert.equal(e.lab.availableContextKeys().includes("stale"), false);
 });
 
 test("completed fast B restores PreviewImage metadata into the correct active canvas", async () => {

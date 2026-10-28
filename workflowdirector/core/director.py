@@ -45,6 +45,7 @@ class DirectorEngine:
         poll_interval_seconds: float = 0.25,
         job_timeout_seconds: float = 3600.0,
         submission_recovery_timeout_seconds: float = 5.0,
+        queue_recovery_timeout_seconds: float = 5.0,
         sleep: SleepFn = asyncio.sleep,
         clock: ClockFn = time.monotonic,
     ) -> None:
@@ -54,6 +55,8 @@ class DirectorEngine:
             raise ValueError("job_timeout_seconds must be > 0")
         if submission_recovery_timeout_seconds <= 0:
             raise ValueError("submission_recovery_timeout_seconds must be > 0")
+        if queue_recovery_timeout_seconds <= 0:
+            raise ValueError("queue_recovery_timeout_seconds must be > 0")
 
         self._adapter = adapter
         self._boundary = boundary_observer or NoopBoundaryObserver()
@@ -62,6 +65,7 @@ class DirectorEngine:
         self._poll_interval = poll_interval_seconds
         self._job_timeout = job_timeout_seconds
         self._submission_recovery_timeout = submission_recovery_timeout_seconds
+        self._queue_recovery_timeout = queue_recovery_timeout_seconds
         self._sleep = sleep
         self._clock = clock
 
@@ -251,19 +255,8 @@ class DirectorEngine:
     ) -> bool:
         """Refuse to submit while any unrelated Comfy job is active."""
 
-        try:
-            active_ids = await self._adapter.get_active_job_ids()
-        except AdapterTransportError as exc:
-            record.fail(
-                "QUEUE_STATE_UNCERTAIN",
-                f"Could not verify active Comfy jobs: {exc}",
-            )
-            return False
-        except Exception as exc:
-            record.fail(
-                "QUEUE_STATE_FAILED",
-                f"{type(exc).__name__}: {exc}",
-            )
+        active_ids = await self._read_active_jobs(record=record, step_id=step_id)
+        if active_ids is None:
             return False
 
         if active_ids:
@@ -393,27 +386,77 @@ class DirectorEngine:
                 )
             )
 
+    async def _read_active_jobs(
+        self,
+        *,
+        record: RunRecord,
+        step_id: str | None,
+        job_id: str | None = None,
+        job_deadline: float | None = None,
+    ) -> set[str] | None:
+        """Pause on transient queue lookups without ending Context or submitting.
+
+        Recovery is bounded by its own budget and the current job deadline.
+        A sustained failure still stops sequencing; it does not cancel the
+        native job or claim it stopped. Service teardown retires its Context
+        transaction so any later callback cannot publish into another run.
+        """
+        # Start the recovery budget after the first failed request. The
+        # adapter's normal request timeout can be longer than that budget.
+        deadline = None
+        recovering = False
+        while True:
+            try:
+                if deadline is None:
+                    active_ids = await self._adapter.get_active_job_ids()
+                else:
+                    remaining = deadline - self._clock()
+                    if remaining <= 0:
+                        raise AdapterTransportError("Queue lookup recovery deadline expired")
+                    try:
+                        active_ids = await asyncio.wait_for(
+                            self._adapter.get_active_job_ids(), timeout=remaining,
+                        )
+                    except asyncio.TimeoutError as exc:
+                        raise AdapterTransportError("Queue lookup recovery request timed out") from exc
+            except AdapterTransportError as exc:
+                recovering = True
+                if deadline is None:
+                    deadline = self._clock() + self._queue_recovery_timeout
+                    if job_deadline is not None:
+                        deadline = min(deadline, job_deadline)
+                record.event("queue_state_transport_error", step_id=step_id,
+                             job_id=job_id, detail=str(exc))
+                if self._clock() >= deadline:
+                    detail = f"Could not verify active Comfy jobs before recovery deadline: {exc}."
+                    if job_id is not None:
+                        detail += (f" Native job {job_id} may still be running; "
+                                   "no successor was submitted and no cancellation is implied.")
+                    record.fail("QUEUE_STATE_UNCERTAIN", detail)
+                    return None
+                await self._sleep(min(self._poll_interval, max(0.0, deadline - self._clock())))
+            except Exception as exc:
+                record.fail("QUEUE_STATE_FAILED", f"{type(exc).__name__}: {exc}")
+                return None
+            else:
+                if recovering:
+                    record.event("queue_state_recovered", step_id=step_id, job_id=job_id)
+                return active_ids
+
     async def _ensure_only_expected_job_active(
         self,
         *,
         record: RunRecord,
         attempt: JobAttemptRecord,
+        job_deadline: float,
     ) -> bool:
         """Fail closed if another Comfy job appears while ours is active."""
 
-        try:
-            active_ids = await self._adapter.get_active_job_ids()
-        except AdapterTransportError as exc:
-            record.fail(
-                "QUEUE_STATE_UNCERTAIN",
-                f"Could not verify active Comfy jobs during execution: {exc}",
-            )
-            return False
-        except Exception as exc:
-            record.fail(
-                "QUEUE_STATE_FAILED",
-                f"{type(exc).__name__}: {exc}",
-            )
+        active_ids = await self._read_active_jobs(
+            record=record, step_id=attempt.step_id, job_id=attempt.job_id,
+            job_deadline=job_deadline,
+        )
+        if active_ids is None:
             return False
 
         foreign_ids = active_ids - {attempt.job_id}
@@ -475,6 +518,7 @@ class DirectorEngine:
                     if not await self._ensure_only_expected_job_active(
                         record=record,
                         attempt=attempt,
+                        job_deadline=deadline,
                     ):
                         return None
 
