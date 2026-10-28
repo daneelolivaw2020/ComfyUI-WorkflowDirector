@@ -1,0 +1,47 @@
+{
+  "id": "be777375-1e39-4d91-8bf9-08a6f91d6287",
+  "revision": 0,
+  "last_node_id": 1,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "WorkflowDirectorContextPutString",
+      "pos": [
+        120,
+        120
+      ],
+      "size": [
+        370,
+        130
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "title": "Context A · Publish greeting",
+      "properties": {
+        "Node name for S&R": "WorkflowDirectorContextPutString"
+      },
+      "widgets_values": [
+        "greeting",
+        "Hello from Context A"
+      ]
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "workflowRendererVersion": "LG",
+    "frontendVersion": "1.53.10"
+  },
+  "version": 0.4
+}

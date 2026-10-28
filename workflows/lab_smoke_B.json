@@ -1,0 +1,40 @@
+{
+  "id": "992e803e-f200-43a0-9e51-6687b8446b79",
+  "revision": 0,
+  "last_node_id": 1,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "WorkflowDirectorTestMarker",
+      "pos": [
+        120,
+        120
+      ],
+      "size": [
+        380,
+        120
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "WorkflowDirector · Smoke B",
+      "properties": {
+        "Node name for S&R": "WorkflowDirectorTestMarker"
+      },
+      "widgets_values": [
+        "WorkflowDirector smoke B"
+      ]
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "workflowRendererVersion": "LG",
+    "frontendVersion": "1.53.10"
+  },
+  "version": 0.4
+}

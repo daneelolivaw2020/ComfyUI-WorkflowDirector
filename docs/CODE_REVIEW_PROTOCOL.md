@@ -1,0 +1,518 @@
+# Code Review Protocol
+
+WorkflowDirector is built around execution and memory lifecycle, so every
+non-trivial change passes two distinct reviews before it is considered ready for
+a Colab test.
+
+## Review A — Current compatibility and correctness
+
+Review against the **current stable ComfyUI release tag**, never against an old
+release merely because it was previously used.
+
+Questions include:
+
+- Is this the current official stable release?
+- Does the ComfyUI API actually exist in that release?
+- Are we using the current API instead of a supported-but-legacy path?
+- Are execution/cache semantics being interpreted correctly?
+- Are metrics labelled according to what they actually measure?
+- Are dependencies already supplied by current ComfyUI?
+- Can a public/native Comfy interface replace an internal implementation detail?
+
+## Review B — Adversarial lifecycle and failure review
+
+Assume the happy path is misleading.
+
+Questions include:
+
+- Could ComfyUI still hold references after the event we call "finished"?
+- Are we confusing live WebSocket events with durable terminal job state?
+- Could a measurement itself initialize or perturb CUDA state?
+- Are we confusing PyTorch allocator memory with total device usage?
+- Could a partial failure mutate persistent Context?
+- Could cleanup overlap a running or queued successor workflow?
+- Could caching invalidate the experiment?
+- Are we carrying diagnostic flags from an obsolete environment?
+- What happens if ComfyUI, the backend process or the Colab kernel dies?
+
+## Current audit — ComfyUI v0.39.0
+
+Audit date: 2026-10-07.
+
+### Finding 1 — v0.38.0 was no longer latest
+
+**Status: corrected.**
+
+The project policy is latest stable. The official latest release on the audit
+date is v0.39.0, so the current audit targets v0.39.0 rather than v0.38.0.
+
+### Finding 2 — node registration used the legacy V1 API
+
+**Status: fixed.**
+
+V1 NODE_CLASS_MAPPINGS remains supported, but the current official example uses
+the V3 ComfyExtension / io.ComfyNode API. The Phase 0 node and package entrypoint
+now use V3.
+
+### Finding 3 — custom queue-status route duplicated internal state
+
+**Status: fixed.**
+
+The earlier diagnostic route read PromptQueue internals directly. ComfyUI v0.39
+has a native Jobs API with explicit pending, in_progress, completed, failed and
+cancelled states. WorkflowDirector now intends to use that API for job lifecycle
+and no longer exposes its own queue-status route.
+
+### Finding 4 — execution_success is still too early
+
+**Status: architecture corrected.**
+
+In v0.39.0, execution_success is emitted before the PromptExecutor finalizer.
+The finalizer then runs prompt_model_tracker.end() and lifecycle end handling.
+Only after PromptExecutor returns does the worker call task_done(), placing the
+job in history.
+
+Therefore:
+
+- WebSocket execution_success is useful live feedback;
+- native Jobs API terminal state is the Master sequencing/commit signal.
+
+### Finding 5 — old diagnostic memory flags would bias the new baseline
+
+**Status: corrected in the validation plan.**
+
+Current ComfyUI uses RAM-pressure caching by default and can enable DynamicVRAM
+on supported NVIDIA systems. The clean lab now starts with current defaults.
+Flags such as --cache-none or --disable-dynamic-vram are tested only as isolated
+diagnostic variables if needed.
+
+### Finding 6 — memory measurements needed to follow Comfy's selected device
+
+**Status: fixed.**
+
+The instrumentation now queries the device selected by ComfyUI rather than
+assuming the process's current CUDA device is necessarily the target device.
+
+### Finding 7 — first CUDA measurement can perturb the baseline
+
+**Status: accounted for.**
+
+Phase 0 performs one warm-up memory query and records the second reading as the
+baseline.
+
+### Current compatibility checks passed
+
+Verified against the v0.39.0 source:
+
+- V3 ComfyExtension / io.ComfyNode registration exists;
+- output nodes with outputs=[] are supported;
+- fingerprint_inputs can force re-execution;
+- custom routes through PromptServer.instance.routes are supported;
+- comfyui_version.__version__ is available;
+- native /api/jobs/{job_id} support is present;
+- cgroup-aware RAM helpers are present;
+- psutil remains a ComfyUI dependency.
+
+
+### Finding 8 — audited version was duplicated across documents
+
+**Status: fixed.**
+
+The exact audited ComfyUI version is now centralized in COMPATIBILITY.md.
+Architecture and test documents refer to that source of truth instead of
+copying a release number that can become stale at different times.
+
+### Second-pass verification
+
+The corrected code was checked again against the exact v0.39.0 tag.
+
+Verified:
+
+- the v0.39.0 V3 node API supports `outputs=[]` with `is_output_node=True`;
+- v0.39.0 uses `fingerprint_inputs` for V3 cache invalidation and core code
+  itself uses `float("NaN")` to force re-execution;
+- v0.39.0 supports `io.NodeOutput(ui=...)`;
+- the native single-job endpoint is exactly `/api/jobs/{job_id}`;
+- a terminal Jobs API record comes from history after the prompt worker calls
+  `PromptExecutor.execute()` and then `task_done()`;
+- the code no longer needs a WorkflowDirector-specific queue-status endpoint.
+
+## Review result
+
+The current Phase 0 code is **statically ready for runtime validation** against
+the audited stable release.
+
+This does not claim that it has run successfully in Colab yet. Runtime loading,
+CUDA measurements and the two-job lifecycle still require the laboratory test.
+
+
+### Finding 9 — same-model A -> B does not prove unload
+
+**Status: validation corrected.**
+
+If Workflow B uses the same Klein model as A, B may succeed by reusing retained
+state. That is valuable for the practical use case but does not prove model
+memory was released.
+
+The validation plan now separates A-only release observation from A -> B
+transition/reuse testing.
+
+### Finding 10 — current default cache can intentionally retain loader outputs
+
+**Status: validation corrected.**
+
+ComfyUI v0.39.0 uses RAM-pressure caching by default. The executor cache persists
+across jobs, and RAMPressureCache can retain ModelPatcher-producing loader
+outputs until pressure triggers eviction.
+
+Therefore a default-cache run is not a strict unload test. `--cache-none` is
+now the controlled cache-isolation experiment rather than merely a fallback
+after a supposed unload failure.
+
+### Finding 11 — terminal job state precedes optional worker GC
+
+**Status: validation corrected.**
+
+The prompt worker calls `task_done()` before its later housekeeping block.
+Normal worker GC/soft cache cleanup uses a 10-second interval.
+
+The test now distinguishes POST_A_IMMEDIATE from POST_A_SETTLED instead of
+drawing conclusions from one snapshot immediately after `completed`.
+
+### Finding 12 — peak CUDA metrics are not per-workflow yet
+
+**Status: documented limitation.**
+
+The current instrumentation exposes PyTorch peak values since the last reset,
+but WorkflowDirector does not yet reset those counters per Workflow. They must
+not be used for per-Workflow pass/fail decisions until a reset protocol is
+implemented.
+
+### Reasoning review result
+
+The corrected first memory test now answers three separate questions:
+
+1. Were MODEL/CLIP/VAE genuinely exercised?
+2. What memory/cache state remains after A alone?
+3. Can B run safely after the boundary?
+
+Those questions are no longer conflated.
+
+
+## Core Director slice review — 2026-10-07
+
+This review covers the first backend-agnostic Director implementation:
+RunPlan/PreparedStep, deterministic job ids, sequential job state machine,
+boundary observer contract, reconnect handling and simulated unit tests.
+
+### Finding 13 — frozen dataclass did not make the prompt snapshot immutable
+
+**Status: fixed.**
+
+PreparedStep originally held a caller-owned dict. A frozen dataclass prevents
+attribute reassignment but does not freeze nested dictionaries.
+
+PreparedStep now canonicalizes the prepared API prompt to JSON at construction
+time and returns a fresh decoded object when the prompt is requested. Mutating
+the original workflow/prompt object or a previously-read prompt cannot alter the
+prepared RunPlan.
+
+### Finding 14 — lost submission acknowledgement was checked only once
+
+**Status: fixed.**
+
+A request can reach ComfyUI while the response is lost, and the native job may
+not be immediately visible through status lookup.
+
+The Director now uses a bounded visibility-recovery poll against the
+pre-generated prompt UUID. UNKNOWN does not trigger resubmission. If the job
+remains unobservable, the run stops as SUBMISSION_UNCERTAIN.
+
+### Finding 15 — patch accidentally referenced a missing recovery method
+
+**Status: fixed during second review.**
+
+The first edit introduced a call to _wait_for_submission_visibility but an edit
+guard prevented the method itself from being inserted. The second review caught
+this before runtime validation.
+
+### Finding 16 — transient status disconnects were treated as fatal
+
+**Status: fixed.**
+
+The adapter contract now distinguishes transient transport failures from logical
+or programming failures. Temporary connectivity failures consume polling budget
+and are recorded as events; they do not cause duplicate submission.
+
+### Finding 17 — boundary result processing could escape the state machine
+
+**Status: fixed.**
+
+Extending the observation list now occurs inside the boundary exception guard.
+A malformed/failing boundary cannot accidentally throw past DirectorEngine and
+allow higher-level code to misinterpret the run state.
+
+### Finding 18 — recovery record must be serializable
+
+**Status: covered by a unit test.**
+
+The simulated test suite now checks that RunRecord.to_dict() can be passed to
+json.dumps after a successful two-step run with memory observations.
+
+### Current static result
+
+The core guarantees, by construction:
+
+- one prepared Workflow is submitted at a time;
+- Workflow B is not submitted until A reached terminal COMPLETED and the
+  boundary observer returned successfully;
+- FAILED/CANCELLED stops the run;
+- a lost submission acknowledgement is resolved by the preassigned UUID and is
+  never blindly retried;
+- transient status transport failures do not create duplicate submissions;
+- boundary failure prevents the next Workflow;
+- prepared prompt snapshots cannot be changed by later caller mutations.
+
+A GitHub Actions workflow has been added to run the backend-agnostic unit tests
+on Python 3.11 and 3.13. At the time of this review no workflow run was yet
+surfaced by the available GitHub connection, so CI success is **not** claimed.
+
+The next integration slice must still implement the real Comfy adapter and
+memory boundary observer before Colab runtime validation.
+
+
+### Finding 19 — native /free was incorrectly assumed to separate cache reset from model unload
+
+**Status: architecture corrected before implementation.**
+
+Source review of ComfyUI v0.39.0 shows that /free sets free_memory=true, then the
+prompt worker evaluates model unload with:
+
+    flags.get("unload_models", free_memory)
+
+Because the HTTP route only stores true flags, sending unload_models=false does
+not prevent the fallback. free_memory=true therefore reaches
+unload_all_models().
+
+The planned "safe native free-memory barrier" was removed. The safe progression
+is now defaults observation -> --cache-none observation -> reference diagnosis
+-> narrowly targeted cleanup only if necessary.
+
+### Finding 20 — POST_SETTLED overstated what a timed observation proves
+
+**Status: terminology corrected.**
+
+The non-destructive observer now records POST_IMMEDIATE and POST_WINDOW_END.
+A configured idle window can span normal housekeeping, but a timer alone does
+not prove that memory has reached a stable fixed point.
+
+
+### Finding 21 — browser client id was incorrectly placed in immutable RunPlan
+
+**Status: fixed.**
+
+client_id is ephemeral WebSocket/progress routing state and may change after a
+frontend reconnect. It is now supplied at run time and is not part of RunPlan.
+
+### Finding 22 — job timeout was expressed as a poll count
+
+**Status: fixed.**
+
+A fixed number of polls couples maximum Workflow duration to poll frequency and
+is especially undesirable on a constrained T4. Director waits now use monotonic
+elapsed-time deadlines.
+
+### Finding 23 — response-body transport loss could be misclassified as a protocol error
+
+**Status: fixed and covered by CI tests.**
+
+If /prompt is accepted but the HTTP body is truncated, the job may already
+exist. aiohttp transport errors while reading the response now preserve
+SubmissionTransportError semantics so UUID recovery is used.
+
+### Finding 24 — service-owned live state needed an explicit engine contract
+
+**Status: fixed.**
+
+DirectorRunService owns the RunRecord exposed to future UI/status routes.
+DirectorEngine mutates that same object. Returning a replacement record or
+returning while the record is still READY/RUNNING is converted to an explicit
+service failure.
+
+### Finding 25 — two Director runs could interleave
+
+**Status: fixed for WorkflowDirector-owned runs.**
+
+DirectorRunService permits only one active Master run.
+
+### Finding 26 — unrelated native Comfy jobs could already occupy the queue
+
+**Status: partially fixed for Phase 1.**
+
+Before every Workflow submission the Director queries the native Jobs API for
+pending/in_progress jobs and refuses to submit unless the queue window is empty.
+
+Continuous monitoring across a future long memory-observation boundary remains
+to be added in Phase 2. Auto Queue/manual queueing must remain disabled during
+the Phase 1 laboratory.
+
+
+### Finding 27 — /api/prompt was a false alarm, not a compatibility bug
+
+**Status: verified.**
+
+ComfyUI v0.39.0 registers its normal route table twice: once at the original
+paths and once with an /api prefix. Therefore both /prompt and /api/prompt are
+valid for non-static routes. WorkflowDirector keeps /api/prompt.
+
+### Finding 28 — an idle wait does not guarantee normal worker GC
+
+**Status: validation and Phase 2 architecture corrected.**
+
+The prompt worker computes a queue timeout from its 10-second GC interval, but
+the current_time value used by the later GC condition is updated after executing
+a queue item. An idle q.get() timeout returning None does not advance that value
+in the reviewed v0.39.0 path.
+
+Therefore "wait > 10 seconds" cannot be used as evidence that gc.collect() and
+soft_empty_cache() ran. POST_WINDOW_END is now explicitly an observation label,
+not a settling/cleanup claim.
+
+### Finding 29 — PromptModelTracker.end() is not model unloading
+
+**Status: reasoning corrected.**
+
+PromptModelTracker.end() clears the current-prompt in-use marker for tracked
+dynamic ModelPatchers and clears the tracker's mapping. It does not clear
+current_loaded_models and must not be interpreted as a model release operation.
+
+### Finding 30 — Phase 2 needed a run-level baseline, not a fake step boundary
+
+**Status: fixed.**
+
+RunRecord now has run-level observations. DirectorEngine invokes a RunObserver
+before the first Workflow. SnapshotRunObserver performs one discarded warm-up
+snapshot and stores a BASELINE reading.
+
+### Finding 31 — baseline and boundary snapshots could be contaminated by queue races
+
+**Status: reduced and tested.**
+
+The current observer brackets memory snapshots with native active-job checks and
+polls for foreign jobs during the observation window. This detects ordinary
+manual/Auto Queue contamination.
+
+It is not yet a hard queue lease; an unrelated job that starts and finishes
+entirely between polls remains theoretically possible. Colab validation must
+therefore keep Auto Queue disabled and avoid manual submissions during a Master
+run.
+
+### Finding 32 — successful HTTP status with an untrustworthy body is ambiguous
+
+**Status: fixed and covered by CI.**
+
+If /api/prompt returns HTTP 200 but its response body is truncated, invalid, or
+missing prompt_id, the prompt may already be queued. The adapter now routes that
+case through SubmissionTransportError so the preassigned UUID is looked up
+instead of treating the request as safely failed or resubmitting it.
+
+A non-200 response with an unreadable body remains a rejection rather than an
+ambiguous accepted submission.
+
+### Finding 33 — Phase 2 observation must not retain model objects
+
+**Status: accounted for.**
+
+memory_snapshot exposes only the length of current_loaded_models as a diagnostic
+registry count. It does not call loaded_models() and retain temporary strong
+references to ModelPatchers while observing a memory boundary.
+
+
+### Finding 34 — queue exclusivity had a check-to-submit race
+
+**Status: reduced further and covered by CI.**
+
+Checking for an empty queue before submission was not sufficient: an unrelated
+job could enter Comfy after the preflight and while the WorkflowDirector job was
+pending/in-progress.
+
+DirectorEngine now polls the native active-job set during non-terminal execution
+states and fails closed if any active id differs from the expected job id.
+
+This is still not a cryptographic/atomic queue lease; a foreign job that starts
+and completes wholly between observations is theoretically possible. Phase 2
+validation therefore still requires Auto Queue off and no manual submissions.
+
+### Finding 35 — active-job lookup artificially capped the queue view
+
+**Status: fixed.**
+
+The native Jobs API call used limit=100 even though the endpoint supports an
+unbounded result when limit is omitted. WorkflowDirector now asks for the full
+pending/in_progress set so queue-integrity checks do not silently ignore jobs
+past an arbitrary page limit.
+
+### Finding 36 — two post-job snapshots were weak diagnostic evidence
+
+**Status: improved.**
+
+ObservationBoundary now stores non-destructive intermediate samples across the
+configured window as well as POST_IMMEDIATE and POST_WINDOW_END. This reveals
+memory drift without interpreting elapsed time as proof of GC or stability.
+
+### Finding 37 — memory deltas needed to remain semantically separate
+
+**Status: fixed.**
+
+A baseline-relative memory summary now reports process RSS, system headroom,
+PyTorch allocated/reserved VRAM, device-global VRAM and model-registry count as
+separate deltas.
+
+The analyzer deliberately refuses to turn one declining metric into a
+"model unloaded" claim.
+
+### Finding 38 — v0.39.0 target was revalidated during the second Phase 2 audit
+
+**Status: verified.**
+
+The official latest stable ComfyUI release on 2026-10-07 remains v0.39.0, and
+the reviewed custom-route behaviour still supports both original and /api-
+prefixed non-static routes.
+
+
+### Finding 39 — first visual lab path must not require user-managed API JSON
+
+**Status: implemented.**
+
+The current frontend package exposes app.graphToPrompt(), which returns both the
+visual workflow and executable output representation. WorkflowDirector now has a
+temporary bottom-panel laboratory that captures the current normal Comfy
+workflow as A or B and builds the internal RunPlan without exposing API JSON to
+the user.
+
+### Finding 40 — direct graphToPrompt capture does not reproduce normal beforeQueued callbacks
+
+**Status: explicitly constrained for the laboratory; final adapter still pending.**
+
+Normal app.queuePrompt invokes widget beforeQueued callbacks before compiling.
+The lab capture path calls graphToPrompt directly, so the first runtime test must
+use fixed seeds and avoid nodes whose required behaviour depends on beforeQueued.
+
+This limitation is visible in the lab panel and is not accepted as the final
+WorkflowDirector compiler semantics.
+
+### Finding 41 — laboratory run polling could leave the UI stuck after a browser-side status error
+
+**Status: fixed.**
+
+The lab panel now releases its local running state on polling failure and retains
+the last run id so the user can query that backend-owned run again without
+recapturing A/B.
+
+### Finding 42 — laboratory memory display omitted reserved VRAM and the absolute baseline
+
+**Status: fixed.**
+
+The panel now includes a BASELINE row plus allocated, reserved, device-global
+VRAM, process RSS, system RAM headroom and model-registry count. This prevents
+the first test from over-weighting allocator allocated memory alone.
